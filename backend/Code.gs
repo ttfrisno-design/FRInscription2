@@ -781,15 +781,17 @@ function doGet(e) {
   if(params.action==='haPaiement'&&params.code){
     var codeHA=params.code||'',statusHA=params.status||'';
     Logger.log('HelloAsso retour — code: '+codeHA+' status: '+statusHA);
-    if(statusHA==='ok'){try{validerPaiementSheet([],codeHA);}catch(ve){Logger.log('Validation HA KO: '+ve);}}
+    // SÉCURITÉ : cette URL est publique, on ne valide donc RIEN ici.
+    // Le paiement est enregistré par le webhook HelloAsso puis validé par l'admin.
+    codeHA=/^FRI-[A-Z0-9]{4}$/.test(codeHA)?codeHA:'';
     return HtmlService.createHtmlOutput(
       '<html><head><meta charset="UTF-8"><meta http-equiv="refresh" content="3;url=https://www.frisneauville.fr">'
       +'<style>body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f2}'
       +'.box{background:white;border-radius:14px;padding:40px;max-width:480px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.1)}</style></head>'
       +'<body><div class="box"><div style="font-size:48px;margin-bottom:16px">'+(statusHA==='ok'?'✅':'❌')+'</div>'
-      +'<h2 style="color:#1a2e22">'+(statusHA==='ok'?'Paiement confirmé !':'Paiement annulé')+'</h2>'
+      +'<h2 style="color:#1a2e22">'+(statusHA==='ok'?'Paiement transmis !':'Paiement annulé')+'</h2>'
       +'<p style="color:#555">Dossier N° <strong>'+codeHA+'</strong></p>'
-      +(statusHA==='ok'?'<p style="color:#2d6a4f">Votre adhésion est validée. Un email de confirmation vous a été envoyé.</p>':'<p style="color:#888">Vous pouvez relancer le paiement depuis votre email de confirmation.</p>')
+      +(statusHA==='ok'?'<p style="color:#2d6a4f">Merci ! Votre paiement va être vérifié par le Foyer Rural, puis vous recevrez un email de confirmation.</p>':'<p style="color:#888">Vous pouvez relancer le paiement depuis votre email de confirmation.</p>')
       +'<p style="font-size:12px;color:#aaa;margin-top:16px">Redirection vers frisneauville.fr dans 3 secondes…</p>'
       +'</div></body></html>');
   }
@@ -906,6 +908,7 @@ function doPost(e) {
         }
         var haPayer  = haData.payer  || {};
         var haAmount = haData.amount || {};
+        var emailPayer = String(haPayer.email||'').trim();
 
         // Pour le type Order, installmentNumber est dans payments[0]
         var haPayments = haData.payments || [];
@@ -992,7 +995,6 @@ function doPost(e) {
 
         Logger.log('Webhook HA — code trouvé: "' + codeDossier + '" (email payeur: ' + emailPayer + ')');
 
-        var emailPayer = String(haPayer.email||'').trim();
         var montantCts = Number(haAmount.total || firstPayment.amount || 0); // en centimes
         var montantEur = montantCts > 0 ? (montantCts / 100).toFixed(2) : '?';
 
@@ -1075,7 +1077,7 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify({status:'ok',inserted:result.inserted})).setMimeType(ContentService.MimeType.JSON);
     }
     if(payload.action==='ajouterActiviteDossier'){
-      if(!verifierToken(payload))return ContentService.createTextOutput(JSON.stringify({status:'error',message:'Token invalide'})).setMimeType(ContentService.MimeType.JSON);
+      if(!verifierTokenAdmin(payload._adminToken))return ContentService.createTextOutput(JSON.stringify(REPONSE_ADMIN_REQUISE)).setMimeType(ContentService.MimeType.JSON);
       var result4=ajouterActiviteDossierSheet(payload);
       return ContentService.createTextOutput(JSON.stringify({status:'ok',inserted:result4.inserted})).setMimeType(ContentService.MimeType.JSON);
     }
@@ -1111,25 +1113,22 @@ function traiterRequete(e) {
       }
       // Action rechercherAdherent passée directement en query string (JSONP)
       if(params.action==='rechercherAdherent'&&params.tel){
-        var resTelDirect=rechercherAdherentParTel(String(params.tel||''));
+        var resTelDirect=rechercherAdherentParTel(String(params.tel||''),String(params.nom||''));
         return repondreAvecCb(resTelDirect,null,null,callback);
       }
       if(params.action==='validerPaiement'&&params.code){
-        var tokenOk=false;
-        try{var pp2=JSON.parse(params.payload||'{}');tokenOk=verifierToken(pp2);}catch(te){tokenOk=false;}
-        Logger.log('validerPaiement GET — token:'+tokenOk+' code:'+params.code);
-        if(!tokenOk){Logger.log('⛔ Token invalide sur validerPaiement GET');return repondreAvecCb({status:'error',message:'Token invalide'},null,null,callback);}
+        if(!verifierTokenAdmin(params._adminToken)){Logger.log('⛔ Session admin absente sur validerPaiement GET');return repondreAvecCb(REPONSE_ADMIN_REQUISE,null,null,callback);}
         var result=validerPaiementSheet([],params.code);
         return repondreAvecCb({status:'ok',updated:result.updated},null,null,callback);
       }
       // getDossierDetail sans payload : code passé directement en query string
       if(params.action==='getDossierDetail' && params.code){
-        var payload2 = {action:'getDossierDetail', code:params.code, _token:params._token||''};
+        var payload2 = {action:'getDossierDetail', code:params.code, _token:params._token||'', _adminToken:params._adminToken||''};
         return traiterActionDirecte(payload2, callback);
       }
       // modifierActivite sans payload
       if(params.action==='modifierActivite' && params.code){
-        try{ var payload3=JSON.parse(params.data||'{}'); payload3.action='modifierActivite'; payload3.code=params.code; payload3._token=params._token||'';
+        try{ var payload3=JSON.parse(params.data||'{}'); payload3.action='modifierActivite'; payload3.code=params.code; payload3._token=params._token||''; payload3._adminToken=params._adminToken||'';
           return traiterActionDirecte(payload3, callback);
         }catch(e){}
       }
@@ -1140,6 +1139,16 @@ function traiterRequete(e) {
     // Normaliser adminLogin quelle que soit la casse reçue
     if(payload.action && payload.action.toLowerCase() === 'adminlogin') payload.action = 'adminLogin';
     Logger.log('action normalisée: "' + payload.action + '"');
+
+    // ── Actions réservées à l'équipe (admin / secrétariat) : session admin obligatoire ──
+    if(ACTIONS_ADMIN.indexOf(payload.action)>=0){
+      var sessionAdmin=verifierTokenAdmin(payload._adminToken||params._adminToken||'');
+      if(!sessionAdmin){
+        Logger.log('⛔ Action admin refusée sans session valide : '+payload.action);
+        return repondreAvecCb(REPONSE_ADMIN_REQUISE,null,null,callback);
+      }
+      Logger.log('Action admin '+payload.action+' par '+sessionAdmin.user+' ('+sessionAdmin.role+')');
+    }
 
     // ── getToken : génère un token dynamique signé, valable 5 minutes ──
     if(payload.action==='getToken'){
@@ -1158,7 +1167,7 @@ function traiterRequete(e) {
       return repondreAvecCb(resGet,null,null,callback);
     }
     if(payload.action==='rechercherAdherent'){
-      var resTel=rechercherAdherentParTel(String(payload.tel||''));
+      var resTel=rechercherAdherentParTel(String(payload.tel||''),String(payload.nom||''));
       return repondreAvecCb(resTel,null,null,callback);
     }
     if(payload.action==='getLicenceFFTT'){
@@ -1172,10 +1181,9 @@ function traiterRequete(e) {
         var loginUser=String(payload.user||'').toLowerCase().trim();
         var loginPass=String(payload.pass||'');
         // Log de diagnostic (longueurs seulement, jamais les valeurs)
-        Logger.log('adminLogin reçu: user="'+loginUser+'" passLen='+loginPass.length+' payloadKeys='+Object.keys(payload).join(','));
+        Logger.log('adminLogin reçu: user="'+loginUser+'"');
         var storedPassHex=props.getProperty('ADMIN_CRED_'+loginUser);
         var storedRole=props.getProperty('ADMIN_ROLE_'+loginUser);
-        Logger.log('adminLogin stored: CRED='+(storedPassHex?storedPassHex.substring(0,8)+'...':'ABSENT')+' ROLE='+(storedRole||'ABSENT'));
         if(!storedPassHex||!storedRole){
           Logger.log('⛔ Admin login - identifiant inconnu : "'+loginUser+'"');
           return repondreAvecCb({status:'error',message:'Identifiant ou mot de passe incorrect'},null,null,callback);
@@ -1183,12 +1191,15 @@ function traiterRequete(e) {
         // HMAC-SHA256(pass, FRI_SECRET_TOKEN) en hex — identique à initAdminCredentials
         var sig=Utilities.computeHmacSha256Signature(loginPass,FRI_SECRET_TOKEN);
         var sigHex=sig.map(function(b){return('0'+(b&0xff).toString(16)).slice(-2);}).join('');
-        Logger.log('adminLogin hash: calc='+sigHex.substring(0,8)+'... stored='+storedPassHex.substring(0,8)+'... match='+(sigHex===storedPassHex));
         if(sigHex!==storedPassHex){
           Logger.log('⛔ Admin login - hash mismatch pour : "'+loginUser+'"');
           return repondreAvecCb({status:'error',message:'Identifiant ou mot de passe incorrect'},null,null,callback);
         }
         var sessionSecret=props.getProperty('ADMIN_SESSION_SECRET')||FRI_SECRET_TOKEN;
+        if(!sessionSecret){
+          Logger.log('⛔ adminLogin : aucun secret de session configuré (ADMIN_SESSION_SECRET / FRI_SECRET_TOKEN)');
+          return repondreAvecCb({status:'error',message:'Serveur non configuré'},null,null,callback);
+        }
         var expiry=String(Math.floor(Date.now()/1000)+28800);
         var payload2=loginUser+':'+storedRole+':'+expiry;
         var sig2=Utilities.computeHmacSha256Signature(payload2,sessionSecret);
@@ -2044,6 +2055,37 @@ function traiterRequete(e) {
       }
     }
 
+    // ── Activités d'un dossier existant (formulaire public « J'ai déjà un dossier ») ──
+    // Remplace la lecture publique de la feuille (gviz) : seules les activités sont renvoyées.
+    if(payload.action==='getActivitesDossier'){
+      try{
+        var codeAD = String(payload.code||'').trim().toUpperCase();
+        if(!/^FRI-[A-Z0-9]{4}$/.test(codeAD))
+          return repondreAvecCb({status:'error',message:'Format invalide'},null,null,callback);
+        var shAD = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+        var activitesAD = [];
+        if(shAD && shAD.getLastRow() > 1){
+          var nbColAD = Math.min(Math.max(shAD.getLastColumn(), 40), 45);
+          var dataAD = shAD.getRange(2,1,shAD.getLastRow()-1,nbColAD).getValues();
+          dataAD.forEach(function(r){
+            if(String(r[19]||'').trim() !== codeAD) return;
+            var statutAD = lireStatutInscription(r);
+            if(statutAD.toLowerCase().indexOf('supprim') >= 0) return;
+            activitesAD.push({
+              activite_id:        lireActiviteId(r),
+              activite:           String(r[22]||'').trim(),
+              tarif:              Number(r[27]||0),
+              statut_inscription: statutAD
+            });
+          });
+        }
+        return repondreAvecCb({status:'ok', code:codeAD, activites:activitesAD},null,null,callback);
+      }catch(eAD){
+        Logger.log('getActivitesDossier KO: '+eAD);
+        return repondreAvecCb({status:'error',message:'Erreur serveur'},null,null,callback);
+      }
+    }
+
     if(payload.action==='verifierDossier'){
       try{
         var codeVD = String(payload.code||'').trim().toUpperCase();
@@ -2073,23 +2115,22 @@ function traiterRequete(e) {
             } else if(ddnRaw) {
               ddnStr = String(ddnRaw).trim();
             }
+            // Action publique : on ne renvoie que de quoi confirmer le dossier
+            // (prénom + initiale du nom), jamais l'email, le téléphone ou la date de naissance.
+            var initiale = function(n) { n = String(n||'').trim(); return n ? n.charAt(0).toUpperCase() + '.' : ''; };
             found = {
               code:        codeVD,
-              membreNom:   String(dataVD[vi][2]||'').trim(),
+              membreNom:   initiale(dataVD[vi][2]),
               membrePrenom:String(dataVD[vi][3]||'').trim(),
-              ddn:         ddnStr,
-              email:       String(dataVD[vi][15]||'').trim(),
-              tel:         String(dataVD[vi][14]||'').trim(),
               respPrenom:  respPrenom,
-              respNom:     respNom,
-              statut:      String(dataVD[vi][21]||'').trim()
+              respNom:     initiale(respNom)
             };
             break;
           }
         }
         if(!found)
           return repondreAvecCb({status:'error',message:'Dossier '+codeVD+' introuvable'},null,null,callback);
-        Logger.log('verifierDossier OK : '+codeVD+' — '+found.nom+' '+found.prenom);
+        Logger.log('verifierDossier OK : '+codeVD);
         return repondreAvecCb({status:'ok', dossier: found},null,null,callback);
       }catch(eVD){
         Logger.log('verifierDossier KO: '+eVD);
@@ -2335,8 +2376,24 @@ function traiterRequete(e) {
 }
 
 // ── Vérification token de session admin ──
+// Actions réservées à l'équipe FRI : elles exigent le jeton de session obtenu par adminLogin
+// (payload._adminToken). Le jeton dynamique "getToken" est public et ne suffit pas.
+var ACTIONS_ADMIN = [
+  'getDossiers', 'getDossierDetail', 'modifierActivite', 'basculerListeAttente',
+  'creerAvoirManuel', 'creerRemboursementManuel', 'envoyerRappelManuel', 'envoyerRappelPieces',
+  'exportGestafillSheet', 'genererPDFInscriptionAdmin', 'getStatsTresorier',
+  'getJournalSauvegardes', 'viderJournalSauvegardes', 'verifierDossiersPerdus',
+  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle',
+  'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
+  'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques'
+];
+var REPONSE_ADMIN_REQUISE = {
+  status: 'error', code: 'ADMIN_AUTH',
+  message: 'Session administrateur requise ou expirée — reconnectez-vous.'
+};
+
 function verifierTokenAdmin(token) {
-  if (!token) return null;
+  if (!token || typeof token !== 'string') return null;
   var parts = token.split(':');
   if (parts.length !== 4) return null;
   var user = parts[0], role = parts[1], expiry = parts[2], sig = parts[3];
@@ -2344,10 +2401,13 @@ function verifierTokenAdmin(token) {
   if (parseInt(expiry) < now) { Logger.log('⛔ Token admin expiré'); return null; }
   var props = PropertiesService.getScriptProperties();
   var sessionSecret = props.getProperty('ADMIN_SESSION_SECRET') || FRI_SECRET_TOKEN;
+  if (!sessionSecret) { Logger.log('⛔ Aucun secret de session configuré'); return null; }
   var payload2 = user + ':' + role + ':' + expiry;
   var sigExpected = Utilities.computeHmacSha256Signature(payload2, sessionSecret);
   var sigHex = sigExpected.map(function(b){return('0'+(b&0xff).toString(16)).slice(-2);}).join('');
   if (sig !== sigHex) { Logger.log('⛔ Token admin signature invalide'); return null; }
+  // Compte supprimé ou rôle modifié depuis la connexion → session invalide
+  if (props.getProperty('ADMIN_ROLE_' + user) !== role) { Logger.log('⛔ Compte admin inconnu ou rôle modifié : ' + user); return null; }
   return { user: user, role: role };
 }
 
@@ -2396,25 +2456,18 @@ function initAdminCredentials() {
   Logger.log('⚠️ Effacez maintenant les mots de passe en clair de cette fonction !');
 }
 
+// Limite globale de requêtes POST par heure. L'ancien seuil (200/h, tous visiteurs confondus)
+// bloquait le site entier dès qu'une vingtaine de familles s'inscrivaient en même temps.
+var RATE_LIMIT_PAR_HEURE = 1500;
 function verifierRateLimit(e) {
   try{
-    var props=PropertiesService.getScriptProperties();
-    var now=Date.now(),heure=Math.floor(now/3600000),clef='rl_'+heure;
-    var compteur=parseInt(props.getProperty(clef)||'0');
-    if(compteur>=200){Logger.log('⛔ Rate limit atteint : '+compteur);return false;}
-    props.setProperty(clef,String(compteur+1));
-    // Nettoyage : supprimer toutes les clés rl_ obsolètes (plus vieilles que 2 heures)
-    try{
-      var allProps=props.getProperties();
-      Object.keys(allProps).forEach(function(k){
-        if(k.indexOf('rl_')===0){
-          var h=parseInt(k.substring(3));
-          if(!isNaN(h)&&h<heure-1) props.deleteProperty(k);
-        }
-      });
-    }catch(x){}
+    var cache=CacheService.getScriptCache();
+    var clef='rl_'+Math.floor(Date.now()/3600000);
+    var compteur=parseInt(cache.get(clef)||'0',10);
+    if(compteur>=RATE_LIMIT_PAR_HEURE){Logger.log('⛔ Rate limit atteint : '+compteur);return false;}
+    cache.put(clef,String(compteur+1),3700); // expire tout seul après l'heure écoulée
     return true;
-  }catch(e){return true;}
+  }catch(err){return true;}
 }
 
 // Nettoyage manuel à exécuter une fois dans l'éditeur GAS pour vider les rl_ accumulés
@@ -2651,8 +2704,23 @@ function communeFromVille(ville) {
   return String(ville||'').toLowerCase().indexOf('isneauville') >= 0 ? 'Isneauville' : 'Hors commune';
 }
 
+// Retire les caractères < et > des textes saisis dans le formulaire public :
+// ces valeurs sont ensuite affichées dans la console admin et dans les emails HTML,
+// un nom contenant du HTML pourrait sinon y exécuter du code (XSS).
+function nettoyerTexteSaisi(v) {
+  if (typeof v === 'string') return v.replace(/[<>]/g, '');
+  if (Array.isArray(v)) return v.map(nettoyerTexteSaisi);
+  if (v && typeof v === 'object') {
+    var o = {};
+    Object.keys(v).forEach(function(k) { o[k] = nettoyerTexteSaisi(v[k]); });
+    return o;
+  }
+  return v;
+}
+
 function addRegistration(rows, paymentStatus, payload) {
   if(!rows||rows.length===0)return{inserted:0};
+  rows = nettoyerTexteSaisi(rows);
 
   // ── Verrou anti-concurrence pour les inscriptions simultanées ──
   var lock = LockService.getScriptLock();
@@ -7710,30 +7778,35 @@ function validerPaiementBasculeGAS(code, actId, modePaiement, montant, commentai
 // LOOKUP LICENCES FFTT 25-26
 // ============================================================
 // Recherche adherent FRI annee precedente par 4 premiers chiffres du telephone (col L)
-function rechercherAdherentParTel(telPartiel) {
+// Recherche d'un adhérent de la saison précédente pour pré-remplir le formulaire.
+// SÉCURITÉ : action publique → numéro complet (10 chiffres) ET 3 premières lettres du nom
+// exigés, et seuls les adhérents correspondant aux deux critères sont renvoyés.
+function rechercherAdherentParTel(telPartiel, nomDebut) {
   try {
-    if (!telPartiel || telPartiel.length < 6) return {status:'error', message:'Saisir au moins 6 chiffres'};
+    var telChiffres = String(telPartiel || '').replace(/[^0-9]/g, '');
+    if (telChiffres.length < 9) return {status:'error', message:'Saisissez votre numéro de téléphone complet'};
+    var normNom = function(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z]/g, ''); };
+    var nomRecherche = normNom(nomDebut).substring(0, 3);
+    if (nomRecherche.length < 3) return {status:'error', message:'Saisissez les 3 premières lettres de votre nom'};
     var ss = SpreadsheetApp.openById(SHEET_ADHERENTS_2526);
     var sheet = ss.getSheets()[0]; // premier onglet
     var lr = sheet.getLastRow();
     if (lr < 2) return {status:'ok', adherents:[]};
     var data = sheet.getRange(2, 1, lr-1, 20).getValues();
     // Col L = index 11 = telephone
-    var telSearch = telPartiel.replace(/[^0-9]/g,'');
+    var telSearch = telChiffres.replace(/^(33|0)(?=\d{9}$)/, '');
     var resultats = [];
     for (var i=0; i<data.length; i++) {
       var row = data[i];
       // Col L (index 11) = telephone principal, col K (index 10) = telephone secondaire
       var tel  = String(row[11]||'').replace(/[^0-9]/g,''); // col L
       var tel2 = String(row[10]||'').replace(/[^0-9]/g,''); // col K
-      // Matcher sur col L ou col K
+      // Numéro identique (col L ou col K, avec ou sans le 0) ET même début de nom
       var matched = false;
       [tel, tel2].forEach(function(t) {
-        if (!t) return;
-        if (t.indexOf(telSearch) === 0) matched = true; // debut du numero avec 0
-        var tSans = t.replace(/^0/,'');
-        if (tSans.indexOf(telSearch) === 0) matched = true; // sans le 0
+        if (t && t.replace(/^(33|0)(?=\d{9}$)/, '') === telSearch) matched = true;
       });
+      if (matched && normNom(row[1]).indexOf(nomRecherche) !== 0) matched = false;
       if (matched) {
         var telRaw1 = String(row[11]||'').trim(); // col L = Tel (avec 0)
         // Le numero est deja avec le 0 en col L
@@ -7758,7 +7831,7 @@ function rechercherAdherentParTel(telPartiel) {
         if (resultats.length >= 5) break; // max 5 resultats
       }
     }
-    Logger.log('rechercherAdherentParTel: ' + telSearch + ' -> ' + resultats.length + ' resultat(s)');
+    Logger.log('rechercherAdherentParTel -> ' + resultats.length + ' resultat(s)');
     return {status:'ok', adherents:resultats};
   } catch(e) {
     Logger.log('rechercherAdherentParTel KO: '+e);

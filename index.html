@@ -567,16 +567,23 @@
   <div class="card" style="background:rgba(201,168,76,0.08);border:1.5px solid rgba(201,168,76,0.35);margin-bottom:14px;">
     <div class="card-title"><span class="icon">🔍</span> Déjà adhérent FRI ? Retrouvez vos informations</div>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-      <div class="field" style="flex:1;min-width:180px;">
-        <label>6 premiers chiffres de votre téléphone <small style="color:#888">(avec ou sans le 0)</small></label>
-        <input type="tel" id="adherent-search-tel" placeholder="ex: 612345 pour 06 12 34..." maxlength="10" inputmode="numeric"
-               oninput="rechercherAdherentFRI(this.value)"
-               style="font-size:16px;letter-spacing:2px;">
+      <div class="field" style="flex:2;min-width:180px;">
+        <label for="adherent-search-tel">Votre numéro de téléphone</label>
+        <input type="tel" id="adherent-search-tel" placeholder="06 12 34 56 78" maxlength="14" inputmode="numeric" autocomplete="tel"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();rechercherAdherentFRI();}"
+               style="font-size:16px;letter-spacing:1px;">
       </div>
-      <button type="button" onclick="rechercherAdherentFRI(document.getElementById('adherent-search-tel').value)" class="btn btn-secondary" style="height:44px;white-space:nowrap;">
+      <div class="field" style="flex:1;min-width:120px;">
+        <label for="adherent-search-nom">3 premières lettres du nom</label>
+        <input type="text" id="adherent-search-nom" placeholder="ex : MAR" maxlength="3" autocomplete="off"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();rechercherAdherentFRI();}"
+               style="font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:2px;">
+      </div>
+      <button type="button" onclick="rechercherAdherentFRI()" class="btn btn-secondary" style="height:44px;white-space:nowrap;">
         🔍 Rechercher
       </button>
     </div>
+    <div style="font-size:12px;color:#888;margin-top:4px;">Le numéro et le nom doivent correspondre à votre adhésion de la saison précédente.</div>
     <div id="adherent-search-results" style="margin-top:10px;"></div>
   </div>
 
@@ -3783,9 +3790,15 @@ async function chargerDossierExistant() {
   const local = JSON.parse(localStorage.getItem('fri_registrations') || '[]');
   const localReg = local.find(r => r.code === code);
 
-  // Puis dans le Sheet via gviz
-  const sheetResult = await lireSheetPublic();
-  const sheetDossier = sheetResult.dossiers ? sheetResult.dossiers.filter(d => d.code === code) : [];
+  // Puis côté serveur (seules les activités du dossier sont renvoyées)
+  let sheetDossier = [];
+  if (!localReg) {
+    try {
+      const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'getActivitesDossier', code: code });
+      const d = (r && r.data) ? r.data : r;
+      sheetDossier = (d && Array.isArray(d.activites)) ? d.activites : [];
+    } catch(e) { console.warn('[FRI] getActivitesDossier KO:', e); }
+  }
 
   if (!localReg && sheetDossier.length === 0) {
     res.innerHTML = '<span style="color:var(--red)">❌ Dossier introuvable. Vérifiez le code.</span>';
@@ -5824,25 +5837,13 @@ async function callAppsScript(payload) {
 function callAppsScriptJsonp(url, payload) {
   // getDossiers : API GAS en priorité, fallback gviz, jamais d'erreur bloquante
   if (payload.action === 'getDossiers') {
+    // Uniquement via le serveur (session admin) : la feuille Google ne doit plus être publique.
     return callAppsScriptFetch(url, { action: 'getDossiers', _token: FRI_SECRET_TOKEN })
       .then(r => {
-        // Si l'API GAS a répondu avec des dossiers → parfait
-        if (r && r.data && r.data.dossiers) {
-          return { ok: true, dossiers: r.data.dossiers };
-        }
-        // Sinon fallback gviz
-        console.warn('[FRI] getDossiers API sans données, fallback gviz');
-        return lireSheetPublic().then(gvizResult => {
-          // Toujours retourner ok:true — Sheet vide = ok, pas une erreur
-          return { ok: true, dossiers: gvizResult.dossiers || [] };
-        });
+        if (r && r.data && r.data.dossiers) return { ok: true, dossiers: r.data.dossiers };
+        return { ok: false, reason: (r && r.data && r.data.message) || 'Réponse du serveur invalide', dossiers: [] };
       })
-      .catch(e => {
-        console.warn('[FRI] getDossiers API exception:', e);
-        return lireSheetPublic().then(gvizResult => {
-          return { ok: true, dossiers: gvizResult.dossiers || [] };
-        }).catch(() => ({ ok: true, dossiers: [] }));
-      });
+      .catch(e => ({ ok: false, reason: e.message, dossiers: [] }));
   }
   if (payload.action === 'ping') {
     return callAppsScriptFetch(url, payload).then(r => ({ ok: true })).catch(() => ({ ok: false }));
@@ -5854,6 +5855,7 @@ function callAppsScriptJsonp(url, payload) {
       var params = new URLSearchParams({
         action:   'rechercherAdherent',
         tel:      payload.tel || '',
+        nom:      payload.nom || '',
         _token:   FRI_SECRET_TOKEN,
         callback: cbName,
         _t:       Date.now()
@@ -5911,170 +5913,42 @@ function callAppsScriptJsonp(url, payload) {
   return callAppsScriptFetch(url, payload);
 }
 
-// Convertir le format date gviz "Date(2026,3,20)" en "20/04/2026"
-function gvizDateToStr(val) {
-  if (!val) return '';
-  const m = String(val).match(/Date\((\d+),(\d+),(\d+)\)/);
-  if (m) {
-    const y = m[1], mo = String(parseInt(m[2])+1).padStart(2,'0'), d = String(m[3]).padStart(2,'0');
-    return d + '/' + mo + '/' + y;
-  }
-  return String(val);
+// Ajoute le jeton de session admin (obtenu à la connexion) aux requêtes de l'équipe.
+// Le serveur refuse toutes les actions d'administration sans ce jeton.
+function ajouterJetonAdmin(payload) {
+  let jeton = null;
+  try { jeton = adminSessionToken; } catch(e) {} // variable déclarée plus bas dans le script
+  if (jeton && payload && !payload._adminToken) payload._adminToken = jeton;
+  return payload;
 }
 
-// Lire l'onglet Inscriptions via l'API publique Google Sheets (gviz)
-async function lireSheetPublic() {
-  const sheetId = (localStorage.getItem('fri_sheet_id') || SHEET_ID_PUBLIC || '').trim();
-  if (!sheetId) {
-    return { ok: false, reason: 'Sheet ID non configuré' };
+// Les données des dossiers viennent du formulaire public puis sont insérées telles quelles
+// dans la console admin (innerHTML) : on retire < et > pour qu'aucun nom ou commentaire
+// ne puisse y injecter du code (et voler la session admin).
+const ACTIONS_DONNEES_DOSSIERS = ['getDossiers', 'getDossierDetail', 'getStatsTresorier', 'getElementsPaiement', 'verifierDossiersPerdus'];
+function nettoyerTexteRecu(v) {
+  if (typeof v === 'string') return v.replace(/[<>]/g, '');
+  if (Array.isArray(v)) return v.map(nettoyerTexteRecu);
+  if (v && typeof v === 'object') {
+    const o = {};
+    Object.keys(v).forEach(k => { o[k] = (k === 'pdfBase64') ? v[k] : nettoyerTexteRecu(v[k]); });
+    return o;
   }
+  return v;
+}
 
-  // Extraire l'ID si l'utilisateur a collé l'URL complète du Sheet
-  let id = sheetId;
-  const urlMatch = sheetId.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
-  if (urlMatch) id = urlMatch[1];
-
-  // Encoder le nom de l'onglet — "Inscriptions" sans accent, mais par sécurité on encode
-  const sheetName = encodeURIComponent('Inscriptions');
-  const gvizUrl = 'https://docs.google.com/spreadsheets/d/' + id
-    + '/gviz/tq?tqx=out:json&sheet=' + sheetName + '&headers=1&_t=' + Date.now();
-
-  console.log('gviz URL:', gvizUrl);
-
-  try {
-    const resp = await fetch(gvizUrl, { cache: 'no-store' });
-    if (resp.status === 404) {
-      return { ok: false, reason: '404 — Sheet ID incorrect ou onglet "Inscriptions" inexistant. ID utilisé : ' + id };
-    }
-    if (resp.status === 403) {
-      return { ok: false, reason: '403 — Sheet non partagé en lecture publique. Allez dans Fichier → Partager → Tout le monde peut voir' };
-    }
-    if (!resp.ok) return { ok: false, reason: 'HTTP ' + resp.status };
-
-    let text = await resp.text();
-
-    // gviz retourne : google.visualization.Query.setResponse({...})
-    const match = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]*)\)/);
-    if (!match) {
-      console.error('gviz format invalide — réponse brute:', text.substring(0, 300));
-      return { ok: false, reason: 'Format gviz invalide — vérifiez que le Sheet est partagé en lecture publique' };
-    }
-
-    const gviz = JSON.parse(match[1]);
-    const nbRows = gviz.table?.rows?.length || 0;
-    const nbCols = gviz.table?.cols?.length || 0;
-    if (gviz.table?.cols) console.log('gviz cols:', gviz.table.cols.map(c => '"'+(c.label||c.id||'')+'"').join(', '));
-    
-    if (!gviz.table || !gviz.table.rows) {
-      console.warn('gviz: pas de table ou rows');
-      return { ok: true, dossiers: [] };
-    }
-    if (nbRows === 0) {
-      console.warn('gviz: 0 lignes — Sheet vide ou onglet incorrect');
-      return { ok: true, dossiers: [] };
-    }
-    
-    // Convertir les lignes gviz en objets dossier
-    // Double approche : par nom de colonne ET par index (robustesse maximale)
-    const cols = gviz.table.cols.map(c => c.label || c.id || '');
-    console.log('gviz cols (', cols.length, '):', cols.join(' | '));
-
-    function cellVal(row, indexOrName) {
-      let idx = typeof indexOrName === 'number'
-        ? indexOrName
-        : cols.findIndex(c => c === indexOrName || c.toLowerCase() === String(indexOrName).toLowerCase());
-      if (idx < 0 || !row.c || idx >= row.c.length) return '';
-      const cell = row.c[idx];
-      if (!cell || cell.v === null || cell.v === undefined) return '';
-      return String(cell.v);
-    }
-
-    const dossiers = gviz.table.rows.map(row => {
-      // Utilise l'index de colonne en priorité (insensible aux variations de nom)
-      // Indices basés sur l'ordre défini dans ecrireEnTeteInscriptions (Code.gs) :
-      // 0=NumLicence 1=Civilite 2=Nom 3=Prenom 4=DDN 5=Appt 6=Bat 7=Voie 8=LieuDit
-      // 9=CP 10=Ville 11=Cedex 12=Pays 13=TelFixe 14=TelPort 15=Email 16=Commentaire
-      // 17=N°Dossier 18=Date 19=Statut 20=Activite 21=Jour 22=Heure 23=Lieu 24=Animateur
-      // 25=Tarif 26=FNSMR 27=Total 28=Paiement 29=QSSante 30=PassAide 31=Sexe 32=IDActivite 33=Responsable
-      // Indices basés sur ecrireEnTeteInscriptions (38 colonnes) :
-      // 0=NumLicence 1=Civilite 2=Nom 3=Prenom 4=DDN 5=Appt 6=Bat 7=Voie 8=LieuDit
-      // 9=CP 10=Ville 11=Cedex 12=Pays 13=TelFixe 14=TelPort 15=Email 16=Commentaire
-      // 17=Tel2 18=Email2
-      // 19=N°Dossier 20=Date 21=Statut 22=Activite 23=Jour 24=Heure 25=Lieu 26=Animateur
-      // 27=Tarif 28=FNSMR 29=Total 30=Paiement 31=Avoir 32=QSSante 33=PassAide
-      // 34=Sexe 35=IDActivite 36=Responsable 37=StatutInscription
-
-      // Détection dynamique selon nb colonnes (compatibilité ancien/nouveau sheet)
-      const isNew = cols.length >= 36; // nouveau format avec Tél.2, Email.2
-      const iCol = {
-        nom:       2,  prenom:   3,  ddn:    4,  voie:    7,
-        cp:        9,  ville:    10, tel:    14, email:   15,
-        commentaire: 16,
-        tel2:      isNew ? 17 : -1,
-        email2:    isNew ? 18 : -1,
-        dossier:   isNew ? 19 : 17,
-        date:      isNew ? 20 : 18,
-        statut:    isNew ? 21 : 19,
-        activite:  isNew ? 22 : 20,
-        jour:      isNew ? 23 : 21,
-        heure:     isNew ? 24 : 22,
-        lieu:      isNew ? 25 : 23,
-        animateur: isNew ? 26 : 24,
-        tarif:     isNew ? 27 : 25,
-        fnsmr:     isNew ? 28 : 26,
-        total:     isNew ? 29 : 27,
-        paiement:  isNew ? 30 : 28,
-        avoir:     isNew ? 31 : -1,
-        qssante:   isNew ? 32 : 29,
-        passaide:  isNew ? 33 : 30,
-        sexe:      isNew ? 34 : 31,
-        actid:     isNew ? 35 : 32,
-        responsable: isNew ? 36 : 33,
-        statutInscription: isNew ? 37 : -1,
-      };
-      const resp = cellVal(row, iCol.responsable);
-      return {
-        code:              cellVal(row, iCol.dossier),
-        date:              gvizDateToStr(cellVal(row, iCol.date)),
-        statut:            cellVal(row, iCol.statut),
-        nom_membre:        cellVal(row, iCol.nom),
-        prenom_membre:     cellVal(row, iCol.prenom),
-        ddn:               gvizDateToStr(cellVal(row, iCol.ddn)),
-        ville:             cellVal(row, iCol.ville),
-        tel:               cellVal(row, iCol.tel),
-        email:             cellVal(row, iCol.email),
-        nom_responsable:   resp ? resp.split(' ').slice(1).join(' ') : '',
-        prenom_responsable:resp ? resp.split(' ')[0] : '',
-        adresse:           cellVal(row, iCol.voie),
-        cp:                cellVal(row, iCol.cp),
-        activite:          cellVal(row, iCol.activite),
-        activite_id:       cellVal(row, iCol.actid),
-        jour:              cellVal(row, iCol.jour),
-        heure:             cellVal(row, iCol.heure),
-        lieu:              cellVal(row, iCol.lieu),
-        animateur:         cellVal(row, iCol.animateur),
-        tarif:             Number(cellVal(row, iCol.tarif)) || 0,
-        total:             Number(cellVal(row, iCol.total)) || 0,
-        mode_paiement:     cellVal(row, iCol.paiement),
-        avoir:             cellVal(row, iCol.avoir),
-        qs_sante:          cellVal(row, iCol.qssante),
-        pass_aide:         cellVal(row, iCol.passaide),
-        sexe:              cellVal(row, iCol.sexe),
-        statut_inscription:cellVal(row, iCol.statutInscription)
-      };
-    });
-    
-    // Log avant filtre
-    
-    const filtered = dossiers.filter(d => d.code && d.code !== 'null' && d.code !== '');
-    if (filtered.length > 0) console.log('Premier dossier:', JSON.stringify(filtered[0]).substring(0, 300));
-
-    return { ok: true, dossiers: filtered };
-
-  } catch(err) {
-    console.error('gviz erreur:', err.message);
-    return { ok: false, reason: err.message };
+// Session admin refusée par le serveur (expirée après 8 h ou invalide) → reconnexion
+function sessionAdminExpiree(data) {
+  if (!data || data.code !== 'ADMIN_AUTH') return false;
+  let connecte = false;
+  try { connecte = !!adminSessionToken; } catch(e) {}
+  if (connecte) {
+    adminLogout();
+    showAdminLogin();
+    const errEl = document.getElementById('admin-login-error');
+    if (errEl) { errEl.textContent = '🔒 Votre session a expiré, reconnectez-vous.'; errEl.style.display = 'block'; }
   }
+  return true;
 }
 
 // Envoi vers Apps Script via fetch no-cors
@@ -6090,6 +5964,7 @@ async function callAppsScriptFetch(url, payload) {
     }
   }
   payload._token = payload._token || FRI_SECRET_TOKEN;
+  ajouterJetonAdmin(payload);
   const action = payload.action || '';
 
   // ── Essayer d'abord fetch GET (Apps Script supporte CORS sur GET) ──
@@ -6097,6 +5972,7 @@ async function callAppsScriptFetch(url, payload) {
   params.set('payload', JSON.stringify(payload));
   params.set('action',  action);
   params.set('_token',  FRI_SECRET_TOKEN);
+  if (payload._adminToken) params.set('_adminToken', payload._adminToken);
   params.set('_t',      Date.now());
   // Passer aussi les paramètres clés directement pour les actions sans payload
   if (payload.code)   params.set('code',   payload.code);
@@ -6118,6 +5994,8 @@ async function callAppsScriptFetch(url, payload) {
       } else {
         data = JSON.parse(text);
       }
+      if (sessionAdminExpiree(data)) return { ok: false, data };
+      if (ACTIONS_DONNEES_DOSSIERS.includes(action)) data = nettoyerTexteRecu(data);
       if (data && (data.status === 'ok' || data.token || data.dossiers || data.places || data.journal || data.inserted !== undefined || data.codes_presents || data.nbDossiers !== undefined || data.lignes !== undefined || data.already_exists !== undefined || data.totalNet !== undefined)) {
         return { ok: true, data };
       }
@@ -6143,6 +6021,8 @@ async function callAppsScriptFetch(url, payload) {
 
     window[cbName] = function(data) {
       if (done) return; done = true; cleanup();
+      if (sessionAdminExpiree(data)) { resolve({ ok: false, data }); return; }
+      if (ACTIONS_DONNEES_DOSSIERS.includes(action)) data = nettoyerTexteRecu(data);
       resolve({ ok: true, data });
     };
     const t = setTimeout(() => {
@@ -6165,9 +6045,10 @@ async function callAppsScriptFetch(url, payload) {
 function callAppsScriptValidate(url, code) {
   return new Promise((resolve) => {
     const cbName = '_friVal_' + Date.now();
-    const payload = { action: 'validerPaiement', _token: FRI_SECRET_TOKEN, code: code, status: 'paid', rows: [] };
+    const payload = ajouterJetonAdmin({ action: 'validerPaiement', _token: FRI_SECRET_TOKEN, code: code, status: 'paid', rows: [] });
     const params = new URLSearchParams();
     params.set('payload', JSON.stringify(payload));
+    if (payload._adminToken) params.set('_adminToken', payload._adminToken);
     params.set('code', code);
     params.set('action', 'validerPaiement');
     params.set('callback', cbName);
@@ -9109,10 +8990,10 @@ async function envoyerRappelPieces(code) {
 
   try {
     // POST direct — fiable pour payload avec tableau piecesAttente
-    const payloadRP = JSON.stringify({
+    const payloadRP = JSON.stringify(ajouterJetonAdmin({
       action: 'envoyerRappelPieces', _token: FRI_SECRET_TOKEN,
       code, email, nom, piecesAttente: piecesUniques
-    });
+    }));
     const respRP = await fetch(url, {
       method: 'POST', redirect: 'follow',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -11627,73 +11508,51 @@ async function docEnregistrer() {
 }
 
 
-async function rechercherAdherentFRI(telPartiel) {
-  const clean = (telPartiel||'').replace(/[^0-9]/g,'');
-  const resultsDiv = document.getElementById('adherent-search-results');
-  if (!resultsDiv) return;
-  if (clean.length < 6) {
-    resultsDiv.innerHTML = clean.length > 0
-      ? '<span style="font-size:12px;color:#888;">' + clean.length + '/6 chiffres saisis...</span>' : '';
-    return;
-  }
-  clearTimeout(_adherentSearchTimer);
-  _adherentSearchTimer = setTimeout(async () => {
-    resultsDiv.innerHTML = '<span style="font-size:12px;color:#888;">\u23f3 Recherche...</span>';
-    try {
-      const res = await callAppsScript({ action: 'rechercherAdherent', tel: clean });
-      const data = (res && res.data) ? res.data : res;
-      if (!data || !data.adherents || data.adherents.length === 0) {
-        resultsDiv.innerHTML = '<span style="font-size:12px;color:#888;">Aucun r\u00e9sultat pour ces chiffres.</span>';
-        return;
-      }
-      // Stocker les adherents pour validation
-      window._adherentSearchData = data.adherents;
-      let html = '<div style="margin-bottom:10px;background:#fff3cd;border:1.5px solid #ffc107;border-radius:10px;padding:12px 14px;">';
-      html += '<div style="font-size:13px;font-weight:700;color:#856404;margin-bottom:8px;">🔒 Validation : saisissez les 3 premières lettres de votre nom</div>';
-      html += '<input type="text" id="adherent-verif-nom" maxlength="3" placeholder="ex: MAR" '
-           + 'style="width:80px;padding:6px 10px;border:1.5px solid #ffc107;border-radius:8px;font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:2px;" '
-           + 'oninput="verifierAdherentNom(this.value)">';
-      html += '<div id="adherent-verif-results" style="margin-top:8px;"></div>';
-      html += '</div>';
-      resultsDiv.innerHTML = html;
-      setTimeout(() => { const el = document.getElementById('adherent-verif-nom'); if(el) el.focus(); }, 50);
-    } catch(e) {
-      resultsDiv.innerHTML = '<span style="font-size:12px;color:#c00;">\u26a0\ufe0f Erreur: ' + e.message + '</span>';
-    }
-  }, 400);
+// Échappe un texte avant de l'insérer dans du HTML
+function escHtml(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-function verifierAdherentNom(saisie) {
-  const verif = (saisie || '').toUpperCase().trim();
-  const div = document.getElementById('adherent-verif-results');
-  if (!div) return;
-  const adherents = window._adherentSearchData || [];
-  if (verif.length < 3) {
-    div.innerHTML = verif.length > 0
-      ? '<span style="font-size:12px;color:#856404;">' + verif.length + '/3 lettres...</span>' : '';
-    return;
+// Recherche d'un adhérent de la saison précédente : le serveur ne renvoie un résultat que si
+// le numéro complet ET les 3 premières lettres du nom correspondent (aucune donnée exposée sinon).
+async function rechercherAdherentFRI() {
+  const tel = (document.getElementById('adherent-search-tel')?.value || '').replace(/[^0-9]/g,'');
+  const nom = (document.getElementById('adherent-search-nom')?.value || '').trim();
+  const resultsDiv = document.getElementById('adherent-search-results');
+  if (!resultsDiv) return;
+  const msg = (txt, color) => { resultsDiv.innerHTML = '<span style="font-size:13px;color:' + (color || '#888') + ';">' + txt + '</span>'; };
+  if (tel.length < 9) { msg('📞 Saisissez votre numéro de téléphone complet.', '#c62828'); return; }
+  const nomNorm = nom.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z]/g,'');
+  if (nomNorm.length < 3) { msg('🔒 Saisissez les 3 premières lettres de votre nom.', '#c62828'); return; }
+
+  clearTimeout(_adherentSearchTimer);
+  msg('⏳ Recherche...');
+  try {
+    const res = await callAppsScript({ action: 'rechercherAdherent', tel: tel, nom: nomNorm });
+    const data = (res && res.data) ? res.data : res;
+    if (data && data.status === 'error') { msg('⚠️ ' + escHtml(data.message || 'Recherche impossible'), '#c62828'); return; }
+    const adherents = (data && data.adherents) || [];
+    window._adherentSearchData = adherents;
+    if (adherents.length === 0) {
+      msg('Aucun adhérent trouvé avec ce numéro et ce nom. Vous pouvez remplir le formulaire ci-dessous.');
+      return;
+    }
+    let html = '<div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">';
+    adherents.forEach(function(a, idx) {
+      const nomComplet = ((a.prenom||'') + ' ' + (a.nom||'')).trim();
+      const ville = ((a.cp||'') + ' ' + (a.ville||'')).trim();
+      html += '<button type="button" onclick="remplirFormulaireAdherent(' + idx + ')"'
+        + ' style="text-align:left;background:rgba(45,106,79,0.12);border:1px solid rgba(45,106,79,0.3);border-radius:8px;padding:10px 14px;cursor:pointer;">'
+        + '<span style="font-weight:700;font-size:14px;color:#1b5e20;">✔️ ' + escHtml(nomComplet) + '</span>'
+        + '<br><span style="font-size:12px;color:#555;">' + escHtml(a.tel1 || '') + (ville ? ' — ' + escHtml(ville) : '') + '</span>'
+        + '<br><span style="font-size:12px;color:#2d6a4f;">Cliquez pour pré-remplir le formulaire</span>'
+        + '</button>';
+    });
+    html += '</div>';
+    resultsDiv.innerHTML = html;
+  } catch(e) {
+    msg('⚠️ Erreur : ' + escHtml(e.message), '#c62828');
   }
-  const norm = s => (s||'').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-  const matches = adherents.filter(a => norm(a.nom).startsWith(norm(verif)));
-  if (matches.length === 0) {
-    div.innerHTML = '<div style="font-size:13px;color:#c62828;font-weight:600;">❌ Nom non reconnu. Vérifiez les 3 premières lettres.</div>';
-    return;
-  }
-  let html = '<div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">';
-  matches.forEach(function(a) {
-    const idx = adherents.indexOf(a);
-    const nom = ((a.prenom||'') + ' ' + (a.nom||'')).trim();
-    const tel = a.tel1 || '';
-    const ville = ((a.cp||'') + ' ' + (a.ville||'')).trim();
-    html += '<button type="button" onclick="remplirFormulaireAdherent(' + idx + ')"'
-      + ' style="text-align:left;background:rgba(45,106,79,0.12);border:1px solid rgba(45,106,79,0.3);border-radius:8px;padding:10px 14px;cursor:pointer;transition:background 0.2s;"'
-      + ' onmouseover="this.style.background=\'rgba(45,106,79,0.25)\'" onmouseout="this.style.background=\'rgba(45,106,79,0.12)\'">'
-      + '<span style="font-weight:700;font-size:14px;color:#1b5e20;">✔️ ' + nom + '</span>'
-      + '<br><span style="font-size:12px;color:#555;">' + tel + (ville ? ' — ' + ville : '') + '</span>'
-      + '</button>';
-  });
-  html += '</div>';
-  div.innerHTML = html;
 }
 
 function syncMembre1DepuisResponsable() {
@@ -11760,9 +11619,10 @@ function remplirFormulaireAdherent(idx) {
   // Feedback visuel
   const resultsDiv = document.getElementById('adherent-search-results');
   if (resultsDiv) resultsDiv.innerHTML = '<div style="background:#d8f3dc;border:1px solid #52b788;border-radius:8px;padding:10px 14px;font-size:13px;color:#1b5e20;font-weight:600;">'
-    + '\u2705 Formulaire pr\u00e9-rempli avec les informations de ' + (a.prenom||'') + ' ' + (a.nom||'')
+    + '\u2705 Formulaire pr\u00e9-rempli avec les informations de ' + escHtml(a.prenom||'') + ' ' + escHtml(a.nom||'')
     + '<br><small style="font-weight:400;color:#555;">V\u00e9rifiez et modifiez si n\u00e9cessaire.</small></div>';
   document.getElementById('adherent-search-tel').value = '';
+  document.getElementById('adherent-search-nom').value = '';
 
   // Popup de vérification des coordonnées
   setTimeout(function() { afficherPopupVerifCoordonnees(a); }, 300);

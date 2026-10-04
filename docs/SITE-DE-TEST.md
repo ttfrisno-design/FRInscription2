@@ -9,7 +9,7 @@ modification validée en test, il suffit de copier le fichier côté production.
 
 ```
              SITE DE TEST                                  PRODUCTION
-  github.io/FRInscription-test/                github.io/FRInscription/
+  github.io/FRInscription2/                    github.io/FRInscription/
             │  (bandeau orange)                            │
             ▼                                              ▼
   Apps Script « FRI Inscriptions TEST »       Apps Script actuel
@@ -53,13 +53,13 @@ modification validée en test, il suffit de copier le fichier côté production.
    copie, sauf pour les tester.
 
 ### 3. Site de test sur GitHub Pages
-1. Créer un dépôt GitHub **`FRInscription-test`** (le mot « test » dans le nom
-   active le mode test).
+1. Le site de test est le dépôt GitHub **`FRInscription2`** (ce nom, ou tout nom
+   contenant « test », active le mode test).
 2. Y déposer `index.html`, après avoir collé l'URL `/exec` de l'étape 2 dans
    `CONFIG_ENV.test.appsScriptUrl` (en haut du script) et, si besoin, l'ID de la
    copie de la feuille dans `CONFIG_ENV.test.sheetIdPublic`.
 3. **Settings › Pages** : publier la branche `main`. Le site est disponible sur
-   `https://ttfrisno-design.github.io/FRInscription-test/`.
+   `https://ttfrisno-design.github.io/FRInscription2/`.
 
 ## Vérifier que le test est bien isolé
 - Le site affiche un bandeau orange « SITE DE TEST ».
@@ -69,7 +69,7 @@ modification validée en test, il suffit de copier le fichier côté production.
 
 ## Passer une modification en production
 1. Tester sur le site de test.
-2. Copier le même `index.html` dans le dépôt `FRInscription` (sans toucher à
+2. Copier le même `index.html` dans le dépôt de production `FRInscription` (sans toucher à
    `CONFIG_ENV`, qui contient les deux configurations).
 3. Copier le même `Code.gs` dans le projet Apps Script de production, puis
    **Gérer les déploiements › Modifier › Nouvelle version** (même URL).

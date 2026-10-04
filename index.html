@@ -1176,7 +1176,7 @@
 // ENVIRONNEMENT : PRODUCTION ou TEST
 // ------------------------------------------------------------
 // Le même fichier sert aux deux sites. Il se met en mode TEST quand il est servi depuis
-// un dépôt/dossier dont le nom contient "test" (ex. .../FRInscription-test/), ouvert en
+// le dépôt FRInscription2 ou un dépôt/dossier dont le nom contient "test", ouvert en
 // local (file://, localhost) ou avec ?env=test dans l'adresse.
 // En TEST : serveur Apps Script de test, aucun lien de paiement réel, bandeau orange,
 // et données du navigateur (localStorage) séparées de celles du site de production.
@@ -1201,7 +1201,7 @@ const FRI_ENV = (function() {
     const q = new URLSearchParams(location.search).get('env');
     if (q === 'test' || q === 'production') return q;
     if (location.protocol === 'file:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return 'test';
-    if (/test/i.test(location.pathname) || /test/i.test(location.hostname)) return 'test';
+    if (/test|frinscription2/i.test(location.pathname) || /test/i.test(location.hostname)) return 'test';
   } catch(e) {}
   return 'production';
 })();

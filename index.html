@@ -7356,6 +7356,12 @@ function toggleAdminPassVis() {
 }
 
 async function doAdminLogin() {
+  if (!getAppsScriptUrl()) {
+    const e0 = document.getElementById('admin-login-error');
+    e0.textContent = '❌ URL du serveur Apps Script non configurée' + (FRI_ENV === 'test' ? ' (CONFIG_ENV.test).' : '.');
+    e0.style.display = 'block';
+    return;
+  }
   const user   = document.getElementById('admin-login-user').value.trim().toLowerCase();
   const pass   = document.getElementById('admin-login-pass').value;
   const errEl  = document.getElementById('admin-login-error');
@@ -7384,7 +7390,13 @@ async function doAdminLogin() {
       }, 15000);
       const s = document.createElement('script');
       s.src = url + '?' + params.toString();
-      s.onerror = function() { try { if (s.parentNode) s.parentNode.removeChild(s); } catch(e) {} };
+      s.onerror = function() {
+        // Réponse illisible (page d'erreur Google, script non déployé…) : inutile d'attendre 15 s
+        clearTimeout(timer);
+        try { if (s.parentNode) s.parentNode.removeChild(s); } catch(e) {}
+        delete window[cbName];
+        resolve({ ok: false, data: { status: 'error', message: 'Le serveur Apps Script ne répond pas correctement (déploiement ou autorisations à vérifier).' } });
+      };
       document.head.appendChild(s);
     });
     const data = res && res.data ? res.data : res;

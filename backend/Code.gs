@@ -26,11 +26,13 @@
 // vers FRI_EMAIL_TEST et HelloAsso en bac à sable (api.helloasso-sandbox.com).
 var SHEET_ID_PRODUCTION = '1KMVBYHReafOYgwolaeCb_yWHfKBdN05gskwHijmYtp4';
 var MODE_TEST = PropertiesService.getScriptProperties().getProperty('FRI_MODE') === 'test';
+var ERREUR_CONFIG = ''; // message renvoyé à toutes les requêtes si le serveur est mal configuré
 if (MODE_TEST) {
   var _sheetTest = PropertiesService.getScriptProperties().getProperty('FRI_SHEET_ID') || '';
   if (!_sheetTest || _sheetTest === SHEET_ID_PRODUCTION) {
     // Garde-fou : un projet de test ne doit jamais écrire dans la feuille de production
-    throw new Error('MODE TEST : définir FRI_SHEET_ID (copie de test de la feuille) dans les propriétés du script.');
+    ERREUR_CONFIG = 'Serveur de test mal configuré : définir FRI_SHEET_ID (copie de test de la feuille) dans les propriétés du script.';
+    _sheetTest = '';
   }
 }
 
@@ -814,6 +816,7 @@ function getLogoDataUrl() {
 
 
 function doGet(e) {
+  if(ERREUR_CONFIG) return repondreAvecCb({status:'error',message:ERREUR_CONFIG},null,null,(e&&e.parameter&&e.parameter.callback)||null);
   try{var allParams=JSON.stringify((e&&e.parameter)?e.parameter:{});Logger.log('doGet params: '+allParams.substring(0,300));}catch(logErr){}
   var params=(e&&e.parameter)?e.parameter:{};
   if(params.action==='fds'&&params.token)return traiterActionFinDeSaison(params.token);
@@ -838,6 +841,7 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  if(ERREUR_CONFIG) return ContentService.createTextOutput(JSON.stringify({status:'error',message:ERREUR_CONFIG})).setMimeType(ContentService.MimeType.JSON);
   try{
     var body=(e&&e.postData&&e.postData.contents)?e.postData.contents:'';
     // form-urlencoded no-cors : le body peut arriver dans e.parameter.payload ou e.postData
@@ -1221,6 +1225,14 @@ function traiterRequete(e) {
         var loginPass=String(payload.pass||'');
         // Log de diagnostic (longueurs seulement, jamais les valeurs)
         Logger.log('adminLogin reçu: user="'+loginUser+'"');
+        // Serveur sans configuration (ex. copie de projet : les propriétés ne sont pas copiées)
+        if(!FRI_SECRET_TOKEN){
+          return repondreAvecCb({status:'error',message:'Serveur non configuré : propriété FRI_SECRET_TOKEN absente (Paramètres du projet › Propriétés du script).'},null,null,callback);
+        }
+        var aDesComptes=Object.keys(props.getProperties()).some(function(k){return k.indexOf('ADMIN_CRED_')===0;});
+        if(!aDesComptes){
+          return repondreAvecCb({status:'error',message:'Aucun compte administrateur sur ce serveur : exécuter initAdminCredentials dans l\'éditeur Apps Script.'},null,null,callback);
+        }
         var storedPassHex=props.getProperty('ADMIN_CRED_'+loginUser);
         var storedRole=props.getProperty('ADMIN_ROLE_'+loginUser);
         if(!storedPassHex||!storedRole){

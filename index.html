@@ -1172,6 +1172,66 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
+// ============================================================
+// ENVIRONNEMENT : PRODUCTION ou TEST
+// ------------------------------------------------------------
+// Le même fichier sert aux deux sites. Il se met en mode TEST quand il est servi depuis
+// un dépôt/dossier dont le nom contient "test" (ex. .../FRInscription-test/), ouvert en
+// local (file://, localhost) ou avec ?env=test dans l'adresse.
+// En TEST : serveur Apps Script de test, aucun lien de paiement réel, bandeau orange,
+// et données du navigateur (localStorage) séparées de celles du site de production.
+// ============================================================
+const CONFIG_ENV = {
+  production: {
+    appsScriptUrl: 'https://script.google.com/macros/s/AKfycbxrUajr7KbXWqGDKYDqX-gqVyquxZrB296jF20TnzyhW6Py8kyDzcMRKDEZD-6MdaGL/exec',
+    helloassoUrl:  'https://www.helloasso.com/associations/foyer-rural-d-isneauville/adhesions/paiement-de-l-adhesion-au-foyer-rural-isneauville-2',
+    sheetIdPublic: '1KMVBYHReafOYgwolaeCb_yWHfKBdN05gskwHijmYtp4',
+  },
+  test: {
+    // ⬇️ Coller ici l'URL /exec du déploiement Apps Script DE TEST
+    appsScriptUrl: 'COLLER_ICI_URL_EXEC_DU_SCRIPT_DE_TEST',
+    // Lien de paiement direct : formulaire du bac à sable HelloAsso (vide = désactivé)
+    helloassoUrl:  '',
+    // ID de la COPIE de test de la feuille Google
+    sheetIdPublic: '',
+  },
+};
+const FRI_ENV = (function() {
+  try {
+    const q = new URLSearchParams(location.search).get('env');
+    if (q === 'test' || q === 'production') return q;
+    if (location.protocol === 'file:' || /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) return 'test';
+    if (/test/i.test(location.pathname) || /test/i.test(location.hostname)) return 'test';
+  } catch(e) {}
+  return 'production';
+})();
+const FRI_CONFIG = CONFIG_ENV[FRI_ENV];
+
+if (FRI_ENV === 'test') {
+  // Les deux sites partagent le même domaine (github.io) donc le même localStorage :
+  // on préfixe toutes les clés pour qu'un dossier de test ne soit jamais renvoyé
+  // vers la production (file d'attente, dossiers en cours…) et inversement.
+  (function() {
+    const P = 'TEST__';
+    const proto = Storage.prototype;
+    const get = proto.getItem, set = proto.setItem, del = proto.removeItem;
+    const estLocal = st => { try { return st === window.localStorage; } catch(e) { return false; } };
+    proto.getItem    = function(k)    { return get.call(this, estLocal(this) ? P + k : k); };
+    proto.setItem    = function(k, v) { return set.call(this, estLocal(this) ? P + k : k, v); };
+    proto.removeItem = function(k)    { return del.call(this, estLocal(this) ? P + k : k); };
+  })();
+  document.title = '🧪 TEST — ' + document.title;
+  document.addEventListener('DOMContentLoaded', function() {
+    const b = document.createElement('div');
+    b.id = 'bandeau-test';
+    b.setAttribute('role', 'status');
+    b.style.cssText = 'position:relative;z-index:101;background:repeating-linear-gradient(45deg,#e65100,#e65100 14px,#ef6c00 14px,#ef6c00 28px);color:#fff;text-align:center;font:700 13px/1.4 sans-serif;padding:6px 10px;';
+    const urlOk = /^https:\/\/script\.google\.com\//.test(FRI_CONFIG.appsScriptUrl);
+    b.textContent = '🧪 SITE DE TEST — les inscriptions ne sont pas réelles, aucun paiement n\'est encaissé'
+      + (urlOk ? '' : ' — ⚠️ URL du serveur de test non configurée (CONFIG_ENV.test)');
+    document.body.insertBefore(b, document.body.firstChild);
+  });
+}
 // ── Forfait country ≥2 créneaux (hors Initiation) ──
 // Déclarée en tête pour être disponible partout (calcTotals, buildRows, renderSummary)
 function calcCountryForfait(membre, isno) {
@@ -1193,7 +1253,7 @@ function calcCountryForfait(membre, isno) {
 // ============================================================
 // CONFIGURATION — À REMPLIR APRÈS DÉPLOIEMENT DU APPS SCRIPT
 // ============================================================
-const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxrUajr7KbXWqGDKYDqX-gqVyquxZrB296jF20TnzyhW6Py8kyDzcMRKDEZD-6MdaGL/exec';
+const APPS_SCRIPT_URL = FRI_CONFIG.appsScriptUrl; // voir CONFIG_ENV en haut du script
 
 
 // ══════════════════════════════════════════════════════════════
@@ -1346,7 +1406,11 @@ function formatDateFRI(d) {
 }
 
 function getAppsScriptUrl() {
-  return localStorage.getItem('fri_apps_script_url') || APPS_SCRIPT_URL;
+  const url = localStorage.getItem('fri_apps_script_url') || APPS_SCRIPT_URL;
+  if (!/^https:\/\//.test(url || '')) return ''; // URL non configurée
+  // Garde-fou : le site de test ne parle jamais au serveur de production
+  if (FRI_ENV === 'test' && url === CONFIG_ENV.production.appsScriptUrl) return '';
+  return url;
 }
 // Token dynamique : récupéré au chargement depuis le GAS (jamais écrit en dur)
 let FRI_SECRET_TOKEN = ''; // sera rempli par initDynamicToken()
@@ -1411,12 +1475,12 @@ async function initDynamicToken() {
   } catch(e) { console.warn('[FRI] initDynamicToken KO:', e); }
   return FRI_SECRET_TOKEN;
 }
-const SHEET_ID_PUBLIC  = '1KMVBYHReafOYgwolaeCb_yWHfKBdN05gskwHijmYtp4'; // ID du Google Sheet FRI
+const SHEET_ID_PUBLIC  = FRI_CONFIG.sheetIdPublic; // ID du Google Sheet FRI (voir CONFIG_ENV)
 // Exemple: 'https://script.google.com/macros/s/AKfycb.../exec'
 // Note: peut aussi etre configure dans le panneau admin sans modifier ce fichier
 
 // URL HelloAsso de l'association
-const HELLOASSO_URL = 'https://www.helloasso.com/associations/foyer-rural-d-isneauville/adhesions/paiement-de-l-adhesion-au-foyer-rural-isneauville-2';
+const HELLOASSO_URL = FRI_CONFIG.helloassoUrl; // voir CONFIG_ENV
 
 // URL de retour après paiement HelloAsso (sera remplacée par l'URL de votre site GitHub Pages)
 // Exemple : 'https://frisneauville.github.io/inscriptions-fri'
@@ -5276,6 +5340,7 @@ async function envoyerPDFParEmail(filename, pdfBase64, membre, responsable, emai
 }
 
 function openHelloAsso() {
+  if (!HELLOASSO_URL) { showToast('🧪 Site de test : lien de paiement HelloAsso désactivé', 'orange'); return; }
   window.open(HELLOASSO_URL, '_blank');
   // Visual feedback
   const btn = document.getElementById('btn-pay-helloasso');

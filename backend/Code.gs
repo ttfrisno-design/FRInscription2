@@ -16,15 +16,35 @@
  * ============================================================
  */
 
+// ── ENVIRONNEMENT : PRODUCTION ou TEST ────────────────────────
+// Le même Code.gs sert aux deux projets Apps Script. Dans la COPIE de test, définir
+// dans Paramètres du projet › Propriétés du script :
+//   FRI_MODE      = test
+//   FRI_SHEET_ID  = ID de la copie de test de la feuille Google
+//   FRI_EMAIL_TEST = adresse qui reçoit TOUS les emails du site de test (sinon : votre compte)
+// En mode test : feuille de test, dossiers Drive préfixés « TEST - », emails détournés
+// vers FRI_EMAIL_TEST et HelloAsso en bac à sable (api.helloasso-sandbox.com).
+var SHEET_ID_PRODUCTION = '1KMVBYHReafOYgwolaeCb_yWHfKBdN05gskwHijmYtp4';
+var MODE_TEST = PropertiesService.getScriptProperties().getProperty('FRI_MODE') === 'test';
+if (MODE_TEST) {
+  var _sheetTest = PropertiesService.getScriptProperties().getProperty('FRI_SHEET_ID') || '';
+  if (!_sheetTest || _sheetTest === SHEET_ID_PRODUCTION) {
+    // Garde-fou : un projet de test ne doit jamais écrire dans la feuille de production
+    throw new Error('MODE TEST : définir FRI_SHEET_ID (copie de test de la feuille) dans les propriétés du script.');
+  }
+}
+
 // ── À CONFIGURER ──────────────────────────────────────────────
-var SHEET_ID         = '1KMVBYHReafOYgwolaeCb_yWHfKBdN05gskwHijmYtp4';
+var SHEET_ID         = MODE_TEST ? _sheetTest : SHEET_ID_PRODUCTION;
 var SHEET_LICENCES_2526 = '1mIhP_kTUhMs7Mqs9urmNOJKSkuZzpAgIdztDAxwL5zE'; // Google Sheet licences FFTT 25-26
 var SHEET_ADHERENTS_2526 = '1N6brFQdVIWMUDboJ82Neb6TvwByfH4RuqUDWb44t-jA'; // Google Sheet adhérents FRI 25-26
 var EMAIL_ADMIN      = 'fri.inscri@gmail.com';
 var EMAIL_TRESORIER  = 'bloquet.t@orange.fr';
 var NOM_ASSO         = "Foyer Rural d\'Isneauville";
 var DEFAULT_CAPACITY = 20;
-var HELLOASSO_URL    = 'https://www.helloasso.com/associations/foyer-rural-d-isneauville/paiements/reglement-adhesion-fri';
+var HELLOASSO_URL    = MODE_TEST
+  ? (PropertiesService.getScriptProperties().getProperty('HA_URL_TEST') || 'https://www.helloasso-sandbox.com')
+  : 'https://www.helloasso.com/associations/foyer-rural-d-isneauville/paiements/reglement-adhesion-fri';
 // ── Secrets — stockés dans Propriétés du script (jamais en clair) ──
 // Pour les définir : Apps Script → Paramètres du projet → Propriétés du script
 // Clés attendues : FRI_SECRET_TOKEN, HA_CLIENT_ID, HA_CLIENT_SECRET
@@ -35,10 +55,30 @@ if (!FRI_SECRET_TOKEN) Logger.log('⚠️ FRI_SECRET_TOKEN absent des propriét�
 // ── HelloAsso Checkout API ────────────────────────────────────
 var HA_CLIENT_ID     = _props.getProperty('HA_CLIENT_ID')     || '';
 var HA_CLIENT_SECRET = _props.getProperty('HA_CLIENT_SECRET') || '';
-var HA_ORG_SLUG      = 'foyer-rural-d-isneauville';
-var HA_API_BASE      = 'https://api.helloasso.com/v5';
+// En test : bac à sable HelloAsso (identifiants et organisation du compte sandbox)
+var HA_HOST          = MODE_TEST ? 'https://api.helloasso-sandbox.com' : 'https://api.helloasso.com';
+var HA_ORG_SLUG      = (MODE_TEST && _props.getProperty('HA_ORG_SLUG')) || 'foyer-rural-d-isneauville';
+var HA_API_BASE      = HA_HOST + '/v5';
 var HA_RETURN_URL    = ScriptApp.getService ? (function(){ try { return ScriptApp.getService().getUrl(); } catch(e){ return ''; } })() : '';
 // ────────────────────────────────────────────────────────────
+
+// ── Aiguillage Drive et emails selon l'environnement ─────────
+// Les dossiers Drive sont retrouvés par leur nom : sans préfixe, un projet de test
+// lancé avec le même compte Google écrirait (et supprimerait !) dans les dossiers réels.
+function nomDossierDrive(nom) { return MODE_TEST ? 'TEST - ' + nom : nom; }
+function dossiersDriveParNom(nom) { return DriveApp.getFoldersByName(nomDossierDrive(nom)); }
+function creerDossierDrive(nom) { return DriveApp.createFolder(nomDossierDrive(nom)); }
+
+// Remplace GmailApp.sendEmail (mêmes paramètres). En test, tout part vers FRI_EMAIL_TEST.
+function envoyerEmail(destinataire, sujet, corps, options) {
+  if (!MODE_TEST) return GmailApp.sendEmail(destinataire, sujet, corps, options);
+  var dest = _props.getProperty('FRI_EMAIL_TEST') || Session.getEffectiveUser().getEmail();
+  var opts = {};
+  Object.keys(options || {}).forEach(function(k) { if (k !== 'cc' && k !== 'bcc') opts[k] = options[k]; });
+  opts.name = '[TEST] ' + (opts.name || NOM_ASSO);
+  Logger.log('MODE TEST — email pour ' + destinataire + ' détourné vers ' + dest);
+  return GmailApp.sendEmail(dest, '[TEST → ' + destinataire + '] ' + sujet, corps, opts);
+}
 
 var SHEET_INSCRIPTIONS  = 'Inscriptions';
 var SHEET_RECAPITULATIF = 'Recapitulatif';
@@ -495,7 +535,7 @@ function helloassoGetToken() {
       Logger.log('HelloAsso token 429 — attente ' + (delaiMs/1000) + 's avant retry ' + attempt + '/' + maxRetries);
       Utilities.sleep(delaiMs);
     }
-    response = UrlFetchApp.fetch('https://api.helloasso.com/oauth2/token', {
+    response = UrlFetchApp.fetch(HA_HOST + '/oauth2/token', {
       method: 'post',
       contentType: 'application/x-www-form-urlencoded',
       payload: 'grant_type=client_credentials&client_id='+encodeURIComponent(HA_CLIENT_ID)+'&client_secret='+encodeURIComponent(HA_CLIENT_SECRET),
@@ -600,8 +640,7 @@ function helloassoBoutonHtml(lienCheckout, montantLabel) {
 //   HA_CLIENT_ID     → votre client_id HA
 //   HA_CLIENT_SECRET → votre client_secret HA
 // ══════════════════════════════════════════════════════════════
-var HA_API_BASE  = 'https://api.helloasso.com/v5';
-var HA_ORG_SLUG  = 'foyer-rural-d-isneauville';
+// (HA_API_BASE et HA_ORG_SLUG : définis en tête de fichier, production ou bac à sable)
 var HA_FORM_SLUG = 'paiement-de-l-adhesion-au-foyer-rural-isneauville-2';
 
 function getHAClientId() {
@@ -643,7 +682,7 @@ function getHAAccessToken() {
   for (var i = 0; i < waits.length; i++) {
     if (waits[i] > 0) { Logger.log('Rate limit HA — attente ' + waits[i] + 'ms'); Utilities.sleep(waits[i]); }
 
-    var resp = UrlFetchApp.fetch('https://api.helloasso.com/oauth2/token', {
+    var resp = UrlFetchApp.fetch(HA_HOST + '/oauth2/token', {
       method: 'post',
       contentType: 'application/x-www-form-urlencoded',
       payload: 'grant_type=client_credentials&client_id=' + encodeURIComponent(clientId)
@@ -1060,7 +1099,7 @@ function doPost(e) {
         } else {
           // Pas de code dossier trouvé — envoyer un email à l'admin
           Logger.log('⚠️ Webhook HA — code dossier introuvable pour payer: ' + emailPayer);
-          GmailApp.sendEmail(EMAIL_ADMIN,
+          envoyerEmail(EMAIL_ADMIN,
             '[FRI] ALERTE Paiement HelloAsso sans code dossier',
             'Un paiement HelloAsso de ' + montantEur + ' € a été reçu de ' + emailPayer + ' mais aucun code dossier FRI-XXXX n\'a été trouvé.\n\nDétail HA :\n' + JSON.stringify(haData, null, 2),
             { name: 'FRI Admin' });
@@ -1265,7 +1304,7 @@ function traiterRequete(e) {
       && !verifierToken(payload)){
       return repondreAvecCb({status:'error',message:'Accès non autorisé'},null,null,callback);
     }
-    if(payload.action==='ping')return repondreAvecCb({status:'ok',message:'PONG v8.82'},null,null,callback);
+    if(payload.action==='ping')return repondreAvecCb({status:'ok',message:'PONG v8.82'+(MODE_TEST?' (TEST)':''),env:MODE_TEST?'test':'production'},null,null,callback);
 
 
     if(payload.action==='rechercherLicencieFFTT'){
@@ -1771,8 +1810,8 @@ function traiterRequete(e) {
             + "<p style='color:#888;font-size:12px'>Foyer Rural d’Isneauville — frisneauville@orange.fr — 02.35.59.01.01</p>"
             + "</div>";
           var sujet = '[FRI] Modification activité — '+emailRow.code+' — '+emailRow.memPrenom+' '+emailRow.memNom+' — '+sujetSuffixe;
-          GmailApp.sendEmail(emailRow.email, sujet, '', {htmlBody:corps, name:'FRI Inscriptions'});
-          GmailApp.sendEmail(EMAIL_ADMIN, '[ADMIN] '+sujet, '', {htmlBody:corps, name:'FRI Inscriptions'});
+          envoyerEmail(emailRow.email, sujet, '', {htmlBody:corps, name:'FRI Inscriptions'});
+          envoyerEmail(EMAIL_ADMIN, '[ADMIN] '+sujet, '', {htmlBody:corps, name:'FRI Inscriptions'});
           logCommentaireAdmin(ss3, 'Modification activité', codeM, memNom, memPrenom, newActNom,
             (diff !== 0 ? diff : newTarif), commentaireAdminMod, montantModifieMod);
         }
@@ -2034,7 +2073,7 @@ function traiterRequete(e) {
           {nom:'3-Règlements intérieurs'}
         ];
         dossiers.forEach(function(d) {
-          var folders = DriveApp.getFoldersByName(d.nom);
+          var folders = dossiersDriveParNom(d.nom);
           if(!folders.hasNext()) return;
           var folder = folders.next();
           var files = folder.getFiles();
@@ -2286,11 +2325,11 @@ function traiterRequete(e) {
         var txtBody = 'Bonjour '+nom+',\n\nVotre dossier '+code+' est enregistre mais il manque :\n'+listTxt
           + '\n\nMerci de nous les apporter en permanence (mardi 16h30-18h30) ou par email a frisneauville@orange.fr.\n\n'+NOM_ASSO;
 
-        GmailApp.sendEmail(email, sujet, txtBody, {
+        envoyerEmail(email, sujet, txtBody, {
           htmlBody: htmlBody, name: NOM_ASSO, replyTo: EMAIL_ADMIN
         });
         // Copie admin
-        GmailApp.sendEmail(EMAIL_ADMIN, '[ADMIN] Rappel envoyé — '+code+' — '+nom, txtBody, { name: NOM_ASSO });
+        envoyerEmail(EMAIL_ADMIN, '[ADMIN] Rappel envoyé — '+code+' — '+nom, txtBody, { name: NOM_ASSO });
         Logger.log('✅ Rappel pièces envoyé : '+code+' → '+email+' ('+pieces.length+' pièce(s))');
         return repondreAvecCb({status:'ok', message:'Email envoyé à '+email},null,null,callback);
       }catch(eRappel){
@@ -2331,7 +2370,7 @@ function traiterRequete(e) {
         var sujet2 = '[FRI] Dossier '+code2+' - Piece(s) manquante(s)';
         var txtBody2 = 'Bonjour '+nom2+',\n\nVotre dossier '+code2+' est enregistr\u00e9 mais il manque :\n'+listTxt2
           + '\n\nMerci de nous les apporter en permanence (mardi 16h30-18h30) ou par email a frisneauville@orange.fr.\n\n'+NOM_ASSO;
-        GmailApp.sendEmail(email2, sujet2, txtBody2, { htmlBody: htmlBody2, name: NOM_ASSO, replyTo: EMAIL_ADMIN });
+        envoyerEmail(email2, sujet2, txtBody2, { htmlBody: htmlBody2, name: NOM_ASSO, replyTo: EMAIL_ADMIN });
         Logger.log('✅ Rappel pièces envoyé (doPost) : '+code2+' → '+email2);
         return repondreAvecCb({status:'ok', message:'Email envoyé à '+email2},null,null,callback);
       }catch(eR2){
@@ -2495,7 +2534,7 @@ function securiserDossier(dossier) {
   try{dossier.setSharing(DriveApp.Access.PRIVATE,DriveApp.Permission.NONE);var fichiers=dossier.getFiles(),nb=0;while(fichiers.hasNext()){securiserFichier(fichiers.next());nb++;}Logger.log('Dossier "'+dossier.getName()+'" sécurisé — '+nb+' fichier(s)');}catch(e){Logger.log('securiserDossier KO : '+e.toString());}
 }
 function creerDossierSecurise(nom) {
-  var dossiers=DriveApp.getFoldersByName(nom);
+  var dossiers=dossiersDriveParNom(nom);
   var dossier;
   if(dossiers.hasNext()){
     dossier=dossiers.next();
@@ -2503,7 +2542,7 @@ function creerDossierSecurise(nom) {
     // Juste s'assurer que le dossier lui-même est privé
     try { dossier.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch(e) {}
   } else {
-    dossier=DriveApp.createFolder(nom);
+    dossier=creerDossierDrive(nom);
     try { dossier.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch(e) {}
   }
   return dossier;
@@ -3843,7 +3882,7 @@ function appliquerModificationDossier(params) {
       var objet = '[FRI] ' + (typeModif === 'ajout' ? 'Ajout activité' : 'Modification dossier')
         + ' — N°' + code + ' — ' + actNomClean;
       var opts = { name: NOM_ASSO, replyTo: EMAIL_ADMIN, htmlBody: bodyHtml };
-      GmailApp.sendEmail(emailAdherent, objet, bodyTexte, opts);
+      envoyerEmail(emailAdherent, objet, bodyTexte, opts);
       Logger.log('✅ Email modif → adhérent : ' + emailAdherent);
     }
 
@@ -3853,7 +3892,7 @@ function appliquerModificationDossier(params) {
         : supplement > 0 ? ' | Supplément : ' + supplement.toFixed(2) + ' €'
         : ' | Pas de différence')
       : ' (non réglé)';
-    GmailApp.sendEmail(EMAIL_ADMIN,
+    envoyerEmail(EMAIL_ADMIN,
       '[FRI Admin] ' + (typeModif === 'ajout' ? 'Ajout' : 'Suppression') + ' — N°' + code + adminSuffix,
       (typeModif === 'ajout' ? '➕' : '➖') + ' ' + actNomClean + ' | ' + code
         + '\nRemise famille : ' + (aRemise ? 'OUI' : 'NON')
@@ -4032,7 +4071,7 @@ function ajouterActiviteDossierSheet(payload) {
           + '  Lieu     : ' + lieu + '\n\n'
           + 'Nous vous contacterons dès qu\'une place se libère.\n\n'
           + 'Foyer Rural d\'Isneauville\nfrisneauville@orange.fr | 02.35.59.01.01';
-        GmailApp.sendEmail(emailAdherent, subjLA, bodyLA, {
+        envoyerEmail(emailAdherent, subjLA, bodyLA, {
           name: NOM_ASSO, replyTo: EMAIL_ADMIN
         });
         Logger.log('✅ Email LA envoyé : ' + code + ' → ' + emailAdherent);
@@ -5012,7 +5051,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
         : '\nAucun supplement - adhesion deja reglee.')
     + (commentaireAdmin ? '\n\nNote de l\'equipe FRI : ' + commentaireAdmin : '')
     + '\n\nContact : frisneauville@orange.fr | 02.35.59.01.01';
-  GmailApp.sendEmail(email, sujet, bodyTxt, opts);
+  envoyerEmail(email, sujet, bodyTxt, opts);
   Logger.log('Email bascule adherent envoye : ' + email);
 }
 
@@ -5078,7 +5117,7 @@ function envoyerEmailAdminBascule(emailAdmin, rows, actNomBasculee, tarifBascule
 
   var sujet = '[FRI] Bascule liste attente N. ' + code + ' - ' + responsable + (tarifARegler > 0 ? ' - A REGLER ' + tarifARegler.toFixed(2) + ' EUR' : ' - Deja regle');
   var logoBA = getLogoBlob();
-  GmailApp.sendEmail(emailAdmin, sujet, 'Bascule liste attente : ' + code + ' - ' + actNomBasculee.replace(/\n/g,' - '), { htmlBody: html, charset: 'UTF-8', name: 'Site FRI Inscriptions', charset: 'UTF-8', inlineImages: logoBA ? {logo_fri: logoBA} : {} });
+  envoyerEmail(emailAdmin, sujet, 'Bascule liste attente : ' + code + ' - ' + actNomBasculee.replace(/\n/g,' - '), { htmlBody: html, charset: 'UTF-8', name: 'Site FRI Inscriptions', charset: 'UTF-8', inlineImages: logoBA ? {logo_fri: logoBA} : {} });
   Logger.log('Email admin bascule envoye : ' + emailAdmin);
 }
 
@@ -5954,7 +5993,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
     var att=[]; if(pdfBlob)att.push(pdfBlob); if(semainierBlob)att.push(semainierBlob);
     opts.attachments = att;
   }
-  GmailApp.sendEmail(email, sujet,
+  envoyerEmail(email, sujet,
     'Bonjour '+prenom+' '+nom+',\n\n'+(isPaid?'Votre inscription est validée.':'Votre demande est enregistrée.')
     +'\nTotal : '+f.totalActivites.toFixed(2)+' €'+(f.totalDeductions>0?'\nSolde : '+f.solde.toFixed(2)+' €':'')
     +'\n\nContact : frisneauville@orange.fr | 02.35.59.01.01', opts);
@@ -6034,7 +6073,7 @@ function envoyerEmailAdmin(emailAdmin, rows, isPaid, modeLabel) {
   var logoBA = getLogoBlob();
   var sujetAdmin = '[FRI] N.' + code + ' - ' + responsable + ' - ' + f.totalActivites.toFixed(2) + ' EUR'
     + (f.totalDeductions>0?' (solde '+f.solde.toFixed(2)+' EUR)':'') + ' - ' + modeLabel;
-  GmailApp.sendEmail(emailAdmin, sujetAdmin, detailText,
+  envoyerEmail(emailAdmin, sujetAdmin, detailText,
     {htmlBody:html, charset:'UTF-8', name:'Site FRI Inscriptions', charset:'UTF-8', inlineImages:logoBA?{logo_fri:logoBA}:{}});
   Logger.log('Email admin envoyé : '+emailAdmin+' — total: '+f.totalActivites+' solde: '+f.solde);
 }
@@ -6052,7 +6091,7 @@ function envoyerExportCent(ss,nb){
   try{var date=Utilities.formatDate(new Date(),'Europe/Paris','yyyy-MM-dd');var nom='Inscriptions_FRI_2026-2027_'+nb+'dossiers_'+date+'.xlsx';// Copie spreadsheet sans UrlFetchApp
     var ssCap=SpreadsheetApp.openById(SHEET_ID);var copieCap=ssCap.copy(nom.replace('.xlsx',''));
     var fCap=DriveApp.getFileById(copieCap.getId());
-    GmailApp.sendEmail(EMAIL_ADMIN,'[FRI] '+nb+' dossiers - export inscriptions','Le cap des '+nb+' dossiers a été atteint le '+date+'.\nLien : '+copieCap.getUrl(),{name:NOM_ASSO});fCap.setTrashed(true);}catch(e){Logger.log('Export 100 dossiers KO : '+e);}
+    envoyerEmail(EMAIL_ADMIN,'[FRI] '+nb+' dossiers - export inscriptions','Le cap des '+nb+' dossiers a été atteint le '+date+'.\nLien : '+copieCap.getUrl(),{name:NOM_ASSO});fCap.setTrashed(true);}catch(e){Logger.log('Export 100 dossiers KO : '+e);}
 }
 
 // ============================================================
@@ -6316,7 +6355,7 @@ function envoyerEmailSuppressionActivite(params) {
   // ── Envoi adhérent ──
   try {
     if (emailAdherent && emailAdherent.indexOf('@') > 0) {
-      GmailApp.sendEmail(emailAdherent,
+      envoyerEmail(emailAdherent,
         '[FRI] Modification dossier N.' + code + ' — ' + actNomClean + ' supprimée',
         bodyTexte,
         { name: 'Foyer Rural d\'Isneauville', replyTo: EMAIL_ADMIN, htmlBody: bodyHtml });
@@ -6332,7 +6371,7 @@ function envoyerEmailSuppressionActivite(params) {
     });
     Object.keys(fnsmrDetail).forEach(function(m){ adminLines.push('  • ' + m + ' — FNSMR : ' + Number(fnsmrDetail[m]).toFixed(2) + ' €'); });
     Object.keys(ffttDetail).forEach(function(m){ if(Number(ffttDetail[m])>0) adminLines.push('  • ' + m + ' — FFTT : ' + Number(ffttDetail[m]).toFixed(2) + ' €'); });
-    GmailApp.sendEmail(EMAIL_ADMIN,
+    envoyerEmail(EMAIL_ADMIN,
       '[FRI Admin] Suppression ' + (estRegle ? 'réglée' : 'non réglée') + ' — N°' + code + ' — ' + actNomClean,
       '&#x1F5D1; ' + actNomClean + ' supprimée\nDossier : ' + code + (estRegle ? ' (RÉGLÉ)' : ' (non réglé)')
         + '\nDate : ' + dateJour
@@ -6933,7 +6972,7 @@ function creerAvoirManuelGAS(code, motif, montant, emailDest, nomDest, prenomDes
         + '<p style="font-size:12px;color:#aaa;margin-top:8px">Cordialement,<br>L\'équipe du Foyer Rural d\'Isneauville</p>'
         + '</div></div></body></html>';
 
-      GmailApp.sendEmail(
+      envoyerEmail(
         emailDest,
         sujetEmail,
         'Votre avoir FRI (' + montant.toFixed(2) + ' €) — Code : ' + codeAvoir,
@@ -7025,7 +7064,7 @@ function creerRemboursementManuelGAS(code, motif, montant, modeRemb, emailDest, 
         + '<p style="font-size:12px;color:#aaa;margin-top:8px">Cordialement,<br>L\'équipe du Foyer Rural d\'Isneauville</p>'
         + '</div></div></body></html>';
 
-      GmailApp.sendEmail(
+      envoyerEmail(
         emailDest,
         sujetEmailR,
         'Remboursement FRI (' + montant.toFixed(2) + ' €) — Mode : ' + modeLabelR,
@@ -7040,7 +7079,7 @@ function creerRemboursementManuelGAS(code, motif, montant, modeRemb, emailDest, 
       Logger.log('✅ Email remboursement envoyé à ' + emailDest + ' (cci trésorier)');
     } else {
       // Pas d'email adhérent : le trésorier doit quand même être notifié
-      GmailApp.sendEmail(
+      envoyerEmail(
         EMAIL_TRESORIER,
         '💶 Remboursement FRI créé — ' + montant.toFixed(2) + ' € (' + code + ')',
         'Un remboursement a été enregistré :\n\n'
@@ -8286,9 +8325,9 @@ function saveBordereauFFTT(code, signatureBase64, extra, rows) {
 
 
 function obtenirDossierFRI(nomSousDossier) {
-  var dossiers = DriveApp.getFoldersByName(nomSousDossier);
+  var dossiers = dossiersDriveParNom(nomSousDossier);
   if (dossiers.hasNext()) return dossiers.next();
-  return DriveApp.createFolder(nomSousDossier);
+  return creerDossierDrive(nomSousDossier);
 }
 
 function majTotalFFTT(ss) {
@@ -8564,11 +8603,11 @@ function sauvegardeQuotidienne(){
     var ss2 = SpreadsheetApp.openById(SHEET_ID);
     var copie2 = ss2.copy(nomFichier.replace('.xlsx',''));
     var dossierNomB='FRI_Backup_Inscriptions';
-    var dossiersB=DriveApp.getFoldersByName(dossierNomB);
-    var dossier=dossiersB.hasNext()?dossiersB.next():DriveApp.createFolder(dossierNomB);
+    var dossiersB=dossiersDriveParNom(dossierNomB);
+    var dossier=dossiersB.hasNext()?dossiersB.next():creerDossierDrive(dossierNomB);
     var fichier=DriveApp.getFileById(copie2.getId());
     dossier.addFile(fichier); DriveApp.getRootFolder().removeFile(fichier);
-    securiserFichier(fichier);var ss=SpreadsheetApp.openById(SHEET_ID);var shInscr=ss.getSheetByName(SHEET_INSCRIPTIONS);var nbLignes=shInscr?Math.max(0,shInscr.getLastRow()-1):0;GmailApp.sendEmail(EMAIL_ADMIN,'FRI Isneauville - Sauvegarde automatique du '+aujourdhui,'Sauvegarde effectuée le '+aujourdhui+' à '+heure+'.\nFichier : '+nomFichier+'\nInscriptions : '+nbLignes+' ligne(s)\nLien Drive : '+fichier.getUrl());}catch(err){Logger.log('ERREUR sauvegarde : '+err.toString());try{GmailApp.sendEmail(EMAIL_ADMIN,'ALERTE FRI - Erreur sauvegarde',err.toString());}catch(e2){}}
+    securiserFichier(fichier);var ss=SpreadsheetApp.openById(SHEET_ID);var shInscr=ss.getSheetByName(SHEET_INSCRIPTIONS);var nbLignes=shInscr?Math.max(0,shInscr.getLastRow()-1):0;envoyerEmail(EMAIL_ADMIN,'FRI Isneauville - Sauvegarde automatique du '+aujourdhui,'Sauvegarde effectuée le '+aujourdhui+' à '+heure+'.\nFichier : '+nomFichier+'\nInscriptions : '+nbLignes+' ligne(s)\nLien Drive : '+fichier.getUrl());}catch(err){Logger.log('ERREUR sauvegarde : '+err.toString());try{envoyerEmail(EMAIL_ADMIN,'ALERTE FRI - Erreur sauvegarde',err.toString());}catch(e2){}}
 }
 function installerDeclencheurSauvegarde(){ScriptApp.getProjectTriggers().forEach(function(t){if(t.getHandlerFunction()==='sauvegardeQuotidienne')ScriptApp.deleteTrigger(t);});ScriptApp.newTrigger('sauvegardeQuotidienne').timeBased().everyDays(1).atHour(20).create();Logger.log('Déclencheur sauvegarde installé — quotidien à 20h');}
 
@@ -8577,7 +8616,7 @@ function installerDeclencheurSauvegarde(){ScriptApp.getProjectTriggers().forEach
 // ============================================================
 function rowToCsv(row){return row.map(function(cell){var val=(cell===null||cell===undefined)?'':String(cell);if(val.indexOf(';')>=0||val.indexOf('"')>=0||val.indexOf('\n')>=0)val='"'+val.replace(/"/g,'""')+'"';return val;}).join(';');}
 function sheetToCsvString(sheet){var lastRow=sheet.getLastRow(),lastCol=sheet.getLastColumn();if(lastRow<1||lastCol<1)return'';var data=sheet.getRange(1,1,lastRow,lastCol).getValues();return'\uFEFF'+data.map(function(row){return rowToCsv(row);}).join('\r\n');}
-function exporterCSVParEmail(){var ss=SpreadsheetApp.openById(SHEET_ID);var sheet=ss.getSheetByName(SHEET_INSCRIPTIONS);var dest='fri.inscri@gmail.com';var today=new Date().toLocaleDateString('fr-FR');if(!sheet||sheet.getLastRow()<2){GmailApp.sendEmail(dest,'[FRI] Export CSV - Aucune donnee','Aucune inscription au '+today+'.');return;}var blob=Utilities.newBlob(sheetToCsvString(sheet),'text/csv; charset=utf-8','inscriptions_FRI_'+today.replace(/\//g,'-')+'.csv');var nbLignes=sheet.getLastRow()-1;GmailApp.sendEmail(dest,'[FRI] Export CSV - '+today+' ('+nbLignes+' inscriptions)','Fichier CSV en pièce jointe.',{attachments:[blob],name:'Site FRI Inscriptions'});}
+function exporterCSVParEmail(){var ss=SpreadsheetApp.openById(SHEET_ID);var sheet=ss.getSheetByName(SHEET_INSCRIPTIONS);var dest='fri.inscri@gmail.com';var today=new Date().toLocaleDateString('fr-FR');if(!sheet||sheet.getLastRow()<2){envoyerEmail(dest,'[FRI] Export CSV - Aucune donnee','Aucune inscription au '+today+'.');return;}var blob=Utilities.newBlob(sheetToCsvString(sheet),'text/csv; charset=utf-8','inscriptions_FRI_'+today.replace(/\//g,'-')+'.csv');var nbLignes=sheet.getLastRow()-1;envoyerEmail(dest,'[FRI] Export CSV - '+today+' ('+nbLignes+' inscriptions)','Fichier CSV en pièce jointe.',{attachments:[blob],name:'Site FRI Inscriptions'});}
 
 // ============================================================
 // FONCTIONS DE TEST
@@ -8719,8 +8758,8 @@ function sauvegardeAvantReset(){
     // Copier le spreadsheet directement (pas d'export URL - fonctionne sur le meme compte)
     var ss = SpreadsheetApp.openById(SHEET_ID);
     var copie = ss.copy(nomCopie);
-    var dossiers = DriveApp.getFoldersByName('FRI_Backup_Inscriptions');
-    var dossier = dossiers.hasNext() ? dossiers.next() : DriveApp.createFolder('FRI_Backup_Inscriptions');
+    var dossiers = dossiersDriveParNom('FRI_Backup_Inscriptions');
+    var dossier = dossiers.hasNext() ? dossiers.next() : creerDossierDrive('FRI_Backup_Inscriptions');
     // Deplacer la copie dans le dossier backup
     var fichierCopie = DriveApp.getFileById(copie.getId());
     dossier.addFile(fichierCopie);
@@ -8931,7 +8970,7 @@ function supprimerOngletsActivites(ss){
   });
   Logger.log('Onglets activites supprimes : ' + nbSupp);
 }
-function viderDossierDrive(nomDossier){try{var dossiers=DriveApp.getFoldersByName(nomDossier);if(!dossiers.hasNext())return;var dossier=dossiers.next();var fichiers=dossier.getFiles();var nbSupp=0;while(fichiers.hasNext()){fichiers.next().setTrashed(true);nbSupp++;}Logger.log('✅ Dossier "'+nomDossier+'" vidé — '+nbSupp+' fichier(s)');}catch(e){Logger.log('⚠️ Erreur vidage "'+nomDossier+'" : '+e.toString());}}
+function viderDossierDrive(nomDossier){try{var dossiers=dossiersDriveParNom(nomDossier);if(!dossiers.hasNext())return;var dossier=dossiers.next();var fichiers=dossier.getFiles();var nbSupp=0;while(fichiers.hasNext()){fichiers.next().setTrashed(true);nbSupp++;}Logger.log('✅ Dossier "'+nomDossier+'" vidé — '+nbSupp+' fichier(s)');}catch(e){Logger.log('⚠️ Erreur vidage "'+nomDossier+'" : '+e.toString());}}
 function simulerRemiseAZero(){Logger.log('=== SIMULATION REMISE À ZÉRO ===');var ss=SpreadsheetApp.openById(SHEET_ID);var protectedSheets=[SHEET_INSCRIPTIONS,SHEET_RECAPITULATIF,SHEET_PLACES,SHEET_CHEQUE_1,SHEET_CHEQUE_2,SHEET_CHEQUE_3,SHEET_AVOIRS,SHEET_AVOIRS_UTILISES,SHEET_AIDE_ANCV,SHEET_AIDE_ATOUT,SHEET_AIDE_PASS_J,SHEET_AIDE_PASS_S,SHEET_ESPECES,SHEET_HELLOASSO];protectedSheets.forEach(function(nom){var sheet=ss.getSheetByName(nom);if(sheet)Logger.log('  Onglet "'+nom+'" : '+Math.max(0,sheet.getLastRow()-1)+' ligne(s)');});var nbAct=0;ss.getSheets().forEach(function(sheet){if(protectedSheets.indexOf(sheet.getName())<0)nbAct++;});Logger.log('  Onglets activités : '+nbAct+' à supprimer');Logger.log('=== FIN SIMULATION ===');}
 
 function initialiserOngletEspeces() {
@@ -8956,7 +8995,7 @@ function testHelloAssoCheckout() {
   var lien = helloassoCreerLienPaiement(16000,'Marie','DUPONT',EMAIL_ADMIN,'FRI-TEST','Test FRI 2026/2027');
   if (!lien) { Logger.log('❌ Lien KO'); return; }
   Logger.log('✅ Lien : '+lien);
-  try{GmailApp.sendEmail(EMAIL_ADMIN,'[FRI] Test HelloAsso','Lien : '+lien);}catch(e){}
+  try{envoyerEmail(EMAIL_ADMIN,'[FRI] Test HelloAsso','Lien : '+lien);}catch(e){}
   Logger.log('=== FIN TEST ===');
 }
 
@@ -9103,12 +9142,12 @@ function envoyerRappelManuelGAS(code) {
       + '\n\nVotre inscription ' + code + ' est en attente de reglement.'
       + '\nMontant : ' + (total > 0 ? total.toFixed(2) + ' EUR' : '?')
       + '\n\nCordialement,\nFoyer Rural d\'Isneauville';
-    GmailApp.sendEmail(email, sujet, bodyText, opts
+    envoyerEmail(email, sujet, bodyText, opts
     );
     Logger.log('✅ Rappel manuel envoyé à ' + email + ' pour ' + code);
 
     // Mail admin
-    GmailApp.sendEmail(EMAIL_ADMIN,
+    envoyerEmail(EMAIL_ADMIN,
       '[FRI] Rappel manuel envoye - ' + code + ' — ' + r0.responsable_prenom + ' ' + r0.responsable_nom,
       'Un rappel de règlement a été envoyé manuellement à ' + email + ' pour le dossier ' + code + '.',
       {name: NOM_ASSO}
@@ -9123,13 +9162,13 @@ function envoyerRappelManuelGAS(code) {
 }
 
 function verifierFinDeSaison(){var props=PropertiesService.getScriptProperties();var now=new Date();var today=Utilities.formatDate(now,'Europe/Paris','yyyy-MM-dd');var dateCible=props.getProperty('FDS_DATE_SUPPRESSION')||(now.getFullYear()+'-06-01');var statut=props.getProperty('FDS_STATUT')||'attente';if(statut==='annulee'){return;}var dateSuppression=new Date(dateCible+'T02:00:00');var dateAvertissement=new Date(dateSuppression);dateAvertissement.setDate(dateAvertissement.getDate()-7);var todayAvert=Utilities.formatDate(dateAvertissement,'Europe/Paris','yyyy-MM-dd');var avertOk=props.getProperty('FDS_AVERTISSEMENT_OK')==='true';if(today===todayAvert&&!avertOk){envoyerAvertissementSuppression(dateCible);props.setProperty('FDS_AVERTISSEMENT_OK','true');return;}if(today===dateCible&&(statut==='confirmee'||statut==='attente')){remiseAZeroComplete();props.deleteProperty('FDS_STATUT');props.deleteProperty('FDS_AVERTISSEMENT_OK');props.setProperty('FDS_DATE_SUPPRESSION',(now.getFullYear()+1)+'-06-01');}}
-function envoyerAvertissementSuppression(dateCible){var scriptId=ScriptApp.getScriptId();var baseUrl=ScriptApp.getService().getUrl();var tokenConfirm=Utilities.base64Encode('confirmer:'+dateCible+':'+scriptId.substring(0,8));var tokenAnnuler=Utilities.base64Encode('annuler:'+dateCible+':'+scriptId.substring(0,8));var tokenReporter=Utilities.base64Encode('reporter30:'+dateCible+':'+scriptId.substring(0,8));PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_CONFIRM',tokenConfirm);PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_ANNULER',tokenAnnuler);PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_REPORTER',tokenReporter);var urlConfirm=baseUrl+'?action=fds&token='+encodeURIComponent(tokenConfirm);var urlAnnuler=baseUrl+'?action=fds&token='+encodeURIComponent(tokenAnnuler);var urlReporter=baseUrl+'?action=fds&token='+encodeURIComponent(tokenReporter);GmailApp.sendEmail(EMAIL_ADMIN,'[FRI] Suppression donnees prevue le '+dateCible,'Confirmer : '+urlConfirm+'\nReporter 30j : '+urlReporter+'\nAnnuler : '+urlAnnuler,{name:NOM_ASSO});}
+function envoyerAvertissementSuppression(dateCible){var scriptId=ScriptApp.getScriptId();var baseUrl=ScriptApp.getService().getUrl();var tokenConfirm=Utilities.base64Encode('confirmer:'+dateCible+':'+scriptId.substring(0,8));var tokenAnnuler=Utilities.base64Encode('annuler:'+dateCible+':'+scriptId.substring(0,8));var tokenReporter=Utilities.base64Encode('reporter30:'+dateCible+':'+scriptId.substring(0,8));PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_CONFIRM',tokenConfirm);PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_ANNULER',tokenAnnuler);PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_REPORTER',tokenReporter);var urlConfirm=baseUrl+'?action=fds&token='+encodeURIComponent(tokenConfirm);var urlAnnuler=baseUrl+'?action=fds&token='+encodeURIComponent(tokenAnnuler);var urlReporter=baseUrl+'?action=fds&token='+encodeURIComponent(tokenReporter);envoyerEmail(EMAIL_ADMIN,'[FRI] Suppression donnees prevue le '+dateCible,'Confirmer : '+urlConfirm+'\nReporter 30j : '+urlReporter+'\nAnnuler : '+urlAnnuler,{name:NOM_ASSO});}
 function traiterActionFinDeSaison(token){var props=PropertiesService.getScriptProperties();var tokenConfirm=props.getProperty('FDS_TOKEN_CONFIRM')||'',tokenAnnuler=props.getProperty('FDS_TOKEN_ANNULER')||'',tokenReporter=props.getProperty('FDS_TOKEN_REPORTER')||'';var message='';if(token===tokenConfirm){props.setProperty('FDS_STATUT','confirmee');message='✅ Suppression confirmée.';}else if(token===tokenAnnuler){props.setProperty('FDS_STATUT','annulee');message='&#x1F6AB; Suppression annulée.';}else if(token===tokenReporter){var dateCible=props.getProperty('FDS_DATE_SUPPRESSION')||'';var nouvelleDate=new Date(dateCible+'T00:00:00');nouvelleDate.setDate(nouvelleDate.getDate()+30);var nouvelleDateStr=Utilities.formatDate(nouvelleDate,'Europe/Paris','yyyy-MM-dd');props.setProperty('FDS_DATE_SUPPRESSION',nouvelleDateStr);props.setProperty('FDS_STATUT','attente');props.deleteProperty('FDS_AVERTISSEMENT_OK');message='&#x1F4C5; Suppression reportée au '+nouvelleDateStr+'.';}else{message='❌ Lien invalide ou expiré.';}return HtmlService.createHtmlOutput('<html><head><meta charset="UTF-8"></head><body style="font-family:Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f2"><div style="background:white;border-radius:14px;padding:40px;max-width:480px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.1)"><div style="font-size:48px;margin-bottom:16px">&#x1F3E1;</div><h2>Foyer Rural d\'Isneauville</h2><p>'+message+'</p></div></body></html>');}
 function installerDeclencheurFinDeSaison(){ScriptApp.getProjectTriggers().forEach(function(t){if(t.getHandlerFunction()==='verifierFinDeSaison')ScriptApp.deleteTrigger(t);});ScriptApp.newTrigger('verifierFinDeSaison').timeBased().everyDays(1).atHour(2).create();var props=PropertiesService.getScriptProperties();if(!props.getProperty('FDS_DATE_SUPPRESSION'))props.setProperty('FDS_DATE_SUPPRESSION',new Date().getFullYear()+'-06-01');Logger.log('✅ Déclencheur fin de saison installé');}
-function modifierDateSuppression(nouvelleDateStr){var props=PropertiesService.getScriptProperties();props.setProperty('FDS_DATE_SUPPRESSION',nouvelleDateStr);props.setProperty('FDS_STATUT','attente');props.deleteProperty('FDS_AVERTISSEMENT_OK');GmailApp.sendEmail(EMAIL_ADMIN,'[FRI] Date de suppression modifiee','Nouvelle date : '+nouvelleDateStr,{name:NOM_ASSO});}
+function modifierDateSuppression(nouvelleDateStr){var props=PropertiesService.getScriptProperties();props.setProperty('FDS_DATE_SUPPRESSION',nouvelleDateStr);props.setProperty('FDS_STATUT','attente');props.deleteProperty('FDS_AVERTISSEMENT_OK');envoyerEmail(EMAIL_ADMIN,'[FRI] Date de suppression modifiee','Nouvelle date : '+nouvelleDateStr,{name:NOM_ASSO});}
 
 // ============================================================
 // AUDIT SÉCURITÉ DRIVE — inchangé v8.2
 // ============================================================
-function auditSecuriteDrive(){Logger.log('=== AUDIT SÉCURITÉ DRIVE ===');['4-Factures acquittées','2-QS Santé Adhérents','FRI_Backup_Inscriptions'].forEach(function(nom){try{var dossiers=DriveApp.getFoldersByName(nom);if(!dossiers.hasNext())return;var dossier=dossiers.next();var access=dossier.getSharingAccess();if(access!==DriveApp.Access.PRIVATE){securiserDossier(dossier);}var fichiers=dossier.getFiles();var nbFich=0,nbProblemes=0;while(fichiers.hasNext()){var f=fichiers.next();nbFich++;if(f.getSharingAccess()!==DriveApp.Access.PRIVATE){securiserFichier(f);nbProblemes++;}}Logger.log('  '+nom+' : '+nbFich+' fichier(s), '+nbProblemes+' corrigé(s)');}catch(e){Logger.log('  ❌ Erreur : '+e.toString());}});try{GmailApp.sendEmail(EMAIL_ADMIN,'[FRI] Audit securite Drive - '+Utilities.formatDate(new Date(),'Europe/Paris','dd/MM/yyyy'),'Audit effectué.');}catch(e){}}
+function auditSecuriteDrive(){Logger.log('=== AUDIT SÉCURITÉ DRIVE ===');['4-Factures acquittées','2-QS Santé Adhérents','FRI_Backup_Inscriptions'].forEach(function(nom){try{var dossiers=dossiersDriveParNom(nom);if(!dossiers.hasNext())return;var dossier=dossiers.next();var access=dossier.getSharingAccess();if(access!==DriveApp.Access.PRIVATE){securiserDossier(dossier);}var fichiers=dossier.getFiles();var nbFich=0,nbProblemes=0;while(fichiers.hasNext()){var f=fichiers.next();nbFich++;if(f.getSharingAccess()!==DriveApp.Access.PRIVATE){securiserFichier(f);nbProblemes++;}}Logger.log('  '+nom+' : '+nbFich+' fichier(s), '+nbProblemes+' corrigé(s)');}catch(e){Logger.log('  ❌ Erreur : '+e.toString());}});try{envoyerEmail(EMAIL_ADMIN,'[FRI] Audit securite Drive - '+Utilities.formatDate(new Date(),'Europe/Paris','dd/MM/yyyy'),'Audit effectué.');}catch(e){}}
 function installerAuditMensuel(){ScriptApp.getProjectTriggers().forEach(function(t){if(t.getHandlerFunction()==='auditSecuriteDrive')ScriptApp.deleteTrigger(t);});ScriptApp.newTrigger('auditSecuriteDrive').timeBased().onMonthDay(1).atHour(3).create();Logger.log('✅ Audit mensuel Drive installé');}

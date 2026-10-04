@@ -21,6 +21,9 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { max-width: 100%; overflow-x: hidden; }
+  /* "clip" coupe le débordement horizontal sans casser position:sticky (en-tête, barre d'étapes) */
+  @supports (overflow-x: clip) { html, body { overflow-x: clip; } }
+  .step-item:focus-visible, .btn:focus-visible, button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
   body { font-family: 'DM Sans', sans-serif; background: var(--cream); color: var(--dark); min-height: 100vh; }
 
   /* HEADER */
@@ -82,7 +85,7 @@
     background: var(--white);
     border-bottom: 1px solid var(--border);
     padding: 16px 24px;
-    position: sticky; top: 72px; z-index: 90;
+    position: sticky; top: 80px; z-index: 90; /* = hauteur de l'en-tête */
   }
   .steps-inner {
     max-width: 900px; margin: 0 auto;
@@ -148,7 +151,7 @@
     .form-grid, .form-grid.triple, .ville-tarif-grid, .membre-sexe-email-grid { grid-template-columns: 1fr; }
 
     /* Barre d'étapes mobile — numéros uniquement, texte masqué */
-    .steps-nav { padding: 10px 8px; top: 56px; }
+    .steps-nav { padding: 10px 8px; top: 52px; }
     .steps-inner { gap: 0; justify-content: space-between; }
     .step-item { flex: 1; padding: 6px 2px; gap: 4px; flex-direction: column; align-items: center; min-width: 0; }
     .step-label { font-size: 9px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48px; }
@@ -166,9 +169,14 @@
       width: 100%; box-sizing: border-box;
     }
 
-    /* En-tête mobile */
-    header { padding: 10px 12px; }
+    /* En-tête mobile compact (il reste affiché pendant le défilement) */
+    header { padding: 0; }
+    .header-inner { padding: 6px 12px; gap: 8px; }
+    .logo { gap: 8px; min-width: 0; }
+    .logo img { height: 40px !important; }
     .logo-text h1 { font-size: 14px; }
+    .logo-text span { display: none; }
+    .header-season { font-size: 12px; padding: 5px 10px; white-space: nowrap; flex-shrink: 0; }
   }
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field label { font-size: 13px; font-weight: 600; color: var(--dark); }
@@ -185,7 +193,10 @@
   .field input:focus, .field select:focus, .field textarea:focus {
     border-color: var(--green); box-shadow: 0 0 0 3px rgba(82,183,136,0.15);
   }
-  .field input.error, .field select.error { border-color: var(--red); }
+  .field input.error, .field select.error { border-color: var(--red); background: #fff5f4; }
+  /* Exemples plus discrets : ils ne doivent pas ressembler à des champs déjà remplis */
+  .field input::placeholder, .field textarea::placeholder { color: #a7b3ac; font-style: italic; opacity: 1; }
+  .field input, .field select, .field textarea { scroll-margin-top: 150px; }
   .field .hint { font-size: 12px; color: var(--gray); }
 
   /* ACTIVITIES */
@@ -1752,17 +1763,34 @@ function nextStep(from) {
 // ============================================================
 // VALIDATION
 // ============================================================
+// Amène l'utilisateur sur le champ en erreur (sinon, sur mobile, il ne voit que le message)
+function allerAuChamp(el) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => { try { el.focus({ preventScroll: true }); } catch(e) {} }, 350);
+}
+
+function libelleChamp(el) {
+  const field = el.closest('.field');
+  const label = field ? field.querySelector('label') : null;
+  return label ? label.textContent.replace(/\*/g, '').replace(/\(.*?\)/g, '').trim() : el.id;
+}
+
 function validateStep1() {
   const fields = ['rl-nom','rl-prenom','rl-adresse','rl-cp','rl-ville','rl-tel1','rl-email1'];
-  let ok = true;
   const errors = [];
+  const manquants = [];
 
   fields.forEach(id => {
     const el = document.getElementById(id);
-    if (!el.value.trim()) { el.classList.add('error'); ok = false; }
+    if (!el.value.trim()) { el.classList.add('error'); manquants.push(el); }
     else el.classList.remove('error');
   });
-  if (!ok) { showToast('Veuillez remplir tous les champs obligatoires (*)', 'red'); return false; }
+  if (manquants.length) {
+    showToast('Champs obligatoires à compléter : ' + manquants.map(libelleChamp).join(', '), 'red', 6000);
+    allerAuChamp(manquants[0]);
+    return false;
+  }
 
   // Validation code postal : exactement 5 chiffres
   const cpEl = document.getElementById('rl-cp');
@@ -1800,7 +1828,8 @@ function validateStep1() {
   }
 
   if (errors.length > 0) {
-    showToast(errors[0], 'red');
+    showToast(errors[0], 'red', 6000);
+    allerAuChamp(document.querySelector('#section-1 .field .error'));
     return false;
   }
 
@@ -2102,14 +2131,18 @@ function validateStep2() {
   if (state.members.length === 0) { showToast('Veuillez ajouter au moins un membre.', 'red'); return false; }
   for (let m of state.members) {
     if (!m.nom || !m.prenom || !m.ddn || !m.sexe) {
-      showToast(`Veuillez compléter toutes les informations de ${m.prenom || 'ce membre'} (nom, prénom, date de naissance, sexe).`, 'red'); return false;
+      const manquants = [['nom','nom'],['prenom','prénom'],['ddn','date de naissance'],['sexe','sexe']].filter(([k]) => !m[k]);
+      manquants.forEach(([k]) => { const el = document.getElementById('m-' + m.id + '-' + k); if (el) el.classList.add('error'); });
+      showToast(`Pour ${m.prenom || 'ce membre'}, il manque : ${manquants.map(x => x[1]).join(', ')}.`, 'red', 6000);
+      allerAuChamp(document.getElementById('m-' + m.id + '-' + manquants[0][0]));
+      return false;
     }
     // Valider la plage de la date de naissance
     const ddnDate = new Date(m.ddn);
     const ddnMin  = new Date('1910-01-01');
-    const ddnMax  = new Date('2025-12-31');
-    if (ddnDate < ddnMin || ddnDate > ddnMax) {
-      showToast(`Date de naissance de ${m.prenom} invalide — doit être entre le 01/01/1910 et le 31/12/2025.`, 'red');
+    const ddnMax  = new Date();
+    if (isNaN(ddnDate.getTime()) || ddnDate < ddnMin || ddnDate > ddnMax) {
+      showToast(`Date de naissance de ${m.prenom} invalide — doit être entre le 01/01/1910 et aujourd'hui.`, 'red');
       const ddnEl = document.getElementById('m-'+m.id+'-ddn');
       if (ddnEl) { ddnEl.style.borderColor = 'red'; ddnEl.scrollIntoView({behavior:'smooth', block:'center'}); }
       return false;
@@ -10449,8 +10482,13 @@ function exportSingleExcel(id) {
 // INIT
 // ============================================================
 (async function init() {
-  // Recuperer le token dynamique avant tout
-  await initDynamicToken();
+  // Afficher le formulaire tout de suite : le jeton est récupéré en arrière-plan
+  // (callAppsScript le redemande de toute façon avant chaque appel). Avant, le premier
+  // membre n'apparaissait qu'après la réponse du serveur, soit jusqu'à ~18 s d'attente.
+  // (DOMContentLoaded : attendre que les <script> suivants soient chargés)
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => addMember());
+  else addMember();
+  initDynamicToken().catch(e => console.warn('[FRI] initDynamicToken:', e));
   // Load places availability before rendering
   // Charger les places avec un léger délai pour laisser le DOM se stabiliser
   // Puis re-rendre la section active pour mettre à jour les badges de places
@@ -10460,16 +10498,63 @@ function exportSingleExcel(id) {
     if (state.step === 2) {
       document.querySelectorAll('.places-badge').forEach(el => {
         const actId = el.closest('[data-act-id]')?.dataset?.actId;
-        if (actId) el.outerHTML = placeBadge(actId);
+        if (actId) el.outerHTML = placeBadgeHtml(actId);
       });
     }
     // Rafraîchir le semainier complet de la section 2
     const s2 = document.getElementById('section-2');
     if (s2 && s2.style.display !== 'none') renderMembers();
   }, 800);
-  addMember();
 })();
 </script>
+<script>
+// ============================================================
+// ACCESSIBILITÉ ET CONFORT DE SAISIE
+// ============================================================
+document.addEventListener('DOMContentLoaded', function() {
+  // Barre d'étapes utilisable au clavier et annoncée par les lecteurs d'écran
+  document.querySelectorAll('.step-item').forEach(function(el, i) {
+    if (!el.getAttribute('onclick')) return; // "Confirmation" n'est pas cliquable
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    el.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); }
+    });
+  });
+  const majEtapeCourante = function() {
+    document.querySelectorAll('.step-item').forEach(function(el) {
+      if (el.classList.contains('active')) el.setAttribute('aria-current', 'step');
+      else el.removeAttribute('aria-current');
+    });
+  };
+  majEtapeCourante();
+  const nav = document.querySelector('.steps-inner') || document.querySelector('.steps-nav');
+  if (nav && window.MutationObserver) {
+    new MutationObserver(majEtapeCourante).observe(nav, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  }
+
+  // Relier chaque libellé à son champ (clic sur le libellé, lecteurs d'écran)
+  let n = 0;
+  document.querySelectorAll('.field').forEach(function(field) {
+    const label = field.querySelector(':scope > label');
+    const input = field.querySelector('input, select, textarea');
+    if (!label || !input || label.htmlFor) return;
+    if (!input.id) input.id = 'fri-champ-' + (++n);
+    label.htmlFor = input.id;
+  });
+});
+
+// Le contour rouge disparaît dès que l'utilisateur corrige le champ
+document.addEventListener('input', function(e) {
+  const el = e.target;
+  if (el && el.classList && el.classList.contains('error') && String(el.value || '').trim()) el.classList.remove('error');
+}, true);
+document.addEventListener('change', function(e) {
+  const el = e.target;
+  if (el && el.tagName === 'SELECT' && el.classList.contains('error') && el.value) el.classList.remove('error');
+}, true);
+</script>
+
 <!-- Modal Signature -->
 <div id="signature-modal" style="display:none;position:fixed;inset:0;z-index:99998;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;padding:20px">
   <div id="signature-box" style="background:white;border-radius:14px;padding:24px;max-width:520px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.4)">
@@ -10550,6 +10635,9 @@ function showToast(msg, type, duree) {
            : (type && type.startsWith('#') ? type : '#856404');
   t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:' + bg + ';color:white;padding:12px 24px;border-radius:10px;font-size:14px;font-weight:600;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,0.3);max-width:90%;text-align:center;line-height:1.5;';
   t.textContent = msg;
+  t.className = 'fri-toast';
+  t.setAttribute('role', 'alert');
+  document.querySelectorAll('.fri-toast').forEach(old => old.remove());
   document.body.appendChild(t);
   setTimeout(() => t.remove(), duree || 4000);
 }

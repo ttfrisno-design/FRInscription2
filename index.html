@@ -3094,10 +3094,11 @@ function slotHtml(act, memberId, color, isno) {
     const [bg, fg] = act.color.split(':');
     color = { bg, fg };
   }
-  const price = prorata(isno ? act.isno : act.hc);
   const placeInfo = state.places[act.id];
   const isFull = placeInfo && placeInfo.available <= 0;
   const m = state.members.find(m => m.id === memberId);
+  const price = tarifActiviteMembre(act, m, isno);
+  const remiseF = mentionReductionFemme(act, m);
   const isSelected = m?.activities?.includes(act.id);
 
   // Linked slot: show visual indicator if sibling is selected
@@ -3131,14 +3132,14 @@ function slotHtml(act, memberId, color, isno) {
   let priceHtml = '';
   if (linkedId) {
     if (isSelected) {
-      priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:${color.fg}">${price}€ (2 séances incluses)</div>`;
+      priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:${color.fg}">${price}€${remiseF} (2 séances incluses)</div>`;
     } else if (linkedSelected) {
-      priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:var(--green)">✔ Inclus — ${price}€</div>`;
+      priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:var(--green)">✔ Inclus — ${price}€${remiseF}</div>`;
     } else {
-      priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:${color.fg}">${price}€ <span style="font-weight:400;font-size:10px;opacity:0.75">(2 séances)</span></div>`;
+      priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:${color.fg}">${price}€${remiseF} <span style="font-weight:400;font-size:10px;opacity:0.75">(2 séances)</span></div>`;
     }
   } else {
-    priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:${color.fg}">${price}€</div>`;
+    priceHtml = `<div class="sem-slot-info" style="font-weight:700;color:${color.fg}">${price}€${remiseF}</div>`;
   }
 
   // FFTT licence badge
@@ -3616,6 +3617,20 @@ function afficherConflitHoraire(nouvelleAct, actEnConflit) {
   }, 50);
 }
 
+// Réaffiche les prix du semainier et des badges d'un membre (ex. changement de sexe → réduction TT)
+function rafraichirTarifsMembre(memberId) {
+  buildCategoryTabs().forEach(t => {
+    const wrap = document.getElementById(`sem-grid-${memberId}-${t.key}`);
+    if (wrap) wrap.innerHTML = buildGrid(memberId, t);
+  });
+  const merged = document.getElementById(`sem-merged-${memberId}`);
+  if (merged && merged.style.display !== 'none' && _activeCats[memberId] && _activeCats[memberId].size > 1) {
+    merged.innerHTML = buildMergedGrid(memberId, [..._activeCats[memberId]]);
+  }
+  updateSelectedBadge(memberId);
+  if (typeof initAllSemainierTouchHandlers === 'function') initAllSemainierTouchHandlers();
+}
+
 function refreshSemainierSlots(memberId) {
   const m = state.members.find(m => m.id === memberId);
   if (!m) return;
@@ -3681,7 +3696,7 @@ function updateSelectedBadge(memberId) {
   el.innerHTML = m.activities.map(actId => {
     const act = getActById(actId);
     if (!act) return '';
-    const price = prorata(isno ? act.isno : act.hc);
+    const price = tarifActiviteMembre(act, m, isno);
     // For linked pairs, show as one combined badge
     if (act.linkedWith) {
       const pairKey = [actId, act.linkedWith].sort().join('|');
@@ -3736,7 +3751,7 @@ function memberHtml(m) {
       <div class="field">
         <label>Sexe <span class="req">*</span></label>
         <select id="m-${m.id}-sexe"
-          onchange="captureMemberField(${m.id},'sexe',this.value);updateMemberTotal(${m.id})">
+          onchange="captureMemberField(${m.id},'sexe',this.value);updateMemberTotal(${m.id});rafraichirTarifsMembre(${m.id})">
           <option value="" ${!m.sexe?'selected':''}>—</option>
           <option value="F" ${m.sexe==='F'?'selected':''}>Féminin</option>
           <option value="M" ${m.sexe==='M'?'selected':''}>Masculin</option>
@@ -4219,6 +4234,19 @@ async function chargerDossierExistant() {
 // ============================================================
 // HELPERS
 // ============================================================
+// Tarif affiché d'une activité pour un membre : réduction féminine TT (-30 €) puis prorata.
+// (Le calcul des totaux appliquait la réduction, mais le semainier, les badges et le
+//  récapitulatif affichaient le plein tarif.)
+const REDUCTION_FEMME_TT = 30;
+function tarifActiviteMembre(act, membre, isno) {
+  let prix = isno ? act.isno : act.hc;
+  if (membre && membre.sexe === 'F' && isTTActivity(act.id)) prix = Math.max(0, prix - REDUCTION_FEMME_TT);
+  return prorata(prix);
+}
+function mentionReductionFemme(act, membre) {
+  return (membre && membre.sexe === 'F' && isTTActivity(act.id)) ? ' <span style="font-size:10px;opacity:.8">(−' + REDUCTION_FEMME_TT + ' € femme)</span>' : '';
+}
+
 function isTTActivity(actId) {
   // Réduction -30€ femmes : TT adultes avec/sans entraînement uniquement
   // NB : ping-bienetre (Ping santé) est exclu de la réduction féminine
@@ -4578,7 +4606,7 @@ function renderSummary() {
         const nomClean = act.name.replace(/\n/g, ' — ');
         const _wlL = m.waitingList || [];
         const _isWaitingL = _wlL.includes(actId);
-        const price = prorata(isno ? act.isno : act.hc);
+        const price = tarifActiviteMembre(act, m, isno);
         const prixCellL = _isWaitingL
           ? '<span style="color:#ff9800;font-weight:600">⏳ En attente</span>'
           : price + '€';

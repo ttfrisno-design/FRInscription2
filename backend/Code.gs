@@ -607,11 +607,62 @@ function helloassoCreerLienPaiement(totalCentimes, prenom, nom, email, codeDossi
   } catch(err) { Logger.log('helloassoCreerLienPaiement ERREUR : '+err.toString()); return null; }
 }
 
-function helloassoBoutonHtml(lienCheckout, montantLabel) {
+// ── Lien de paiement HelloAsso à mettre dans un email ──
+// Un paiement HelloAsso (checkout) expire en ~15 min : l'email contient donc un lien vers
+// ce script (?action=payer&t=…), qui crée un paiement neuf au moment du clic.
+// Le montant est stocké côté serveur (jamais dans l'URL).
+function creerLienPaiementEmail(code, montant, email, prenom, nom, description) {
+  try {
+    var url = ScriptApp.getService().getUrl();
+    if (!url || !(montant > 0)) return '';
+    var jeton = Utilities.getUuid().replace(/-/g, '');
+    var props = PropertiesService.getScriptProperties();
+    props.setProperty('pay_' + jeton, JSON.stringify({
+      code: code, montant: Math.round(montant * 100) / 100, email: email || '',
+      prenom: prenom || '', nom: nom || '', description: description || '', cree: Date.now()
+    }));
+    // Ménage : jetons de plus de 90 jours
+    try {
+      var limite = Date.now() - 90 * 24 * 3600 * 1000, toutes = props.getProperties();
+      Object.keys(toutes).forEach(function(k) {
+        if (k.indexOf('pay_') !== 0) return;
+        try { if (JSON.parse(toutes[k]).cree < limite) props.deleteProperty(k); } catch(e) { props.deleteProperty(k); }
+      });
+    } catch(e) {}
+    return url + '?action=payer&t=' + jeton;
+  } catch(e) { Logger.log('creerLienPaiementEmail KO : ' + e); return ''; }
+}
+
+// Page ouverte depuis le lien de l'email : crée le paiement HelloAsso et propose le bouton
+function pagePaiementEmail(jeton) {
+  var info = null;
+  try { info = JSON.parse(PropertiesService.getScriptProperties().getProperty('pay_' + String(jeton || '').replace(/[^a-f0-9]/gi, '')) || 'null'); } catch(e) {}
+  var page = function(contenu) {
+    return HtmlService.createHtmlOutput('<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+      + '<body style="font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f2">'
+      + '<div style="background:white;border-radius:14px;padding:32px 24px;max-width:480px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.1)">'
+      + '<div style="font-size:40px">&#x1F3E1;</div><h2 style="color:#1a2e22">' + NOM_ASSO + '</h2>' + contenu + '</div></body></html>')
+      .setTitle('Règlement — ' + NOM_ASSO);
+  };
+  if (!info) return page('<p>Ce lien de paiement n\'est plus valable.</p><p style="color:#666;font-size:14px">Contactez-nous : frisneauville@orange.fr — 02.35.59.01.01</p>');
+  var montantCts = Math.round(Number(info.montant) * 100);
+  var lienHA = helloassoCreerLienPaiement(montantCts, info.prenom, info.nom, info.email, info.code,
+    (info.description || 'Règlement') + ' — ' + info.code);
+  var lien = lienHA || HELLOASSO_URL;
+  return page('<p>Dossier <strong>' + info.code + '</strong></p>'
+    + '<p style="font-size:22px;font-weight:900;color:#1a2e22;margin:8px 0">' + Number(info.montant).toFixed(2) + ' €</p>'
+    + '<a href="' + lien + '" target="_top" style="display:inline-block;background:#4c40cf;color:white;text-decoration:none;font-weight:700;padding:14px 26px;border-radius:10px;margin:10px 0">Payer avec HelloAsso</a>'
+    + (lienHA ? '<p style="font-size:12px;color:#666">Formulaire pré-rempli à votre nom, paiement sécurisé.</p>'
+              : '<p style="font-size:12px;color:#666">Indiquez le montant ci-dessus et votre code dossier <strong>' + info.code + '</strong> sur le formulaire HelloAsso.</p>'));
+}
+
+function helloassoBoutonHtml(lienCheckout, montantLabel, noteOverride) {
   var lien = lienCheckout || HELLOASSO_URL;
   var svgLock = '<svg width="9" height="10" viewBox="0 0 11 12" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3.875 3V4.5H7.625V3C7.625 1.969 6.781 1.125 5.75 1.125C4.695 1.125 3.875 1.969 3.875 3ZM2.75 4.5V3C2.75 1.359 4.086 0 5.75 0C7.391 0 8.75 1.359 8.75 3V4.5H9.5C10.32 4.5 11 5.18 11 6V10.5C11 11.344 10.32 12 9.5 12H2C1.156 12 0.5 11.344 0.5 10.5V6C0.5 5.18 1.156 4.5 2 4.5H2.75ZM1.625 6V10.5C1.625 10.711 1.789 10.875 2 10.875H9.5C9.688 10.875 9.875 10.711 9.875 10.5V6C9.875 5.813 9.688 5.625 9.5 5.625H2C1.789 5.625 1.625 5.813 1.625 6Z" fill="#2e2f5e"/></svg>';
   var montantHtml = montantLabel ? '<div style="font-size:18px;font-weight:900;color:#1a2e22;margin:6px 0 10px;">' + montantLabel + '</div>' : '';
-  var noteHtml = lienCheckout
+  var noteHtml = noteOverride
+    ? '<div style="font-size:11px;color:#666;margin-top:4px;">' + noteOverride + '</div>'
+    : lienCheckout
     ? '<div style="font-size:11px;color:#666;margin-top:4px;">&#x1F512; Formulaire pré-rempli à votre nom — valable 15 min</div>'
     : '<div style="font-size:11px;color:#666;margin-top:4px;">Ou lors des permanences : mardis 16h30-18h30</div>';
   var bouton = '<a href="'+lien+'" style="text-decoration:none;display:inline-block;">'
@@ -820,6 +871,7 @@ function doGet(e) {
   try{var allParams=JSON.stringify((e&&e.parameter)?e.parameter:{});Logger.log('doGet params: '+allParams.substring(0,300));}catch(logErr){}
   var params=(e&&e.parameter)?e.parameter:{};
   if(params.action==='fds'&&params.token)return traiterActionFinDeSaison(params.token);
+  if(params.action==='payer'&&params.t)return pagePaiementEmail(params.t);
   if(params.action==='haPaiement'&&params.code){
     var codeHA=params.code||'',statusHA=params.status||'';
     Logger.log('HelloAsso retour — code: '+codeHA+' status: '+statusHA);
@@ -1070,7 +1122,17 @@ function doPost(e) {
             var verroProps = PropertiesService.getScriptProperties();
             var dejaTraite = verroProps.getProperty(verroKey);
 
-            if (dejaValide || dejaTraite) {
+            if (dejaValide && !dejaTraite && checkoutId) {
+              // Complément (ex. activité ajoutée) payé sur un dossier déjà réglé :
+              // on l'enregistre dans l'onglet HelloAsso sans toucher au statut du dossier.
+              verroProps.setProperty(verroKey, String(Date.now()));
+              majOngletHelloAssoWebhook(SpreadsheetApp.openById(SHEET_ID), codeDossier, haPayer, montantCts / 100,
+                String(haOrder.formType || ''), String(haOrder.formName || 'Complément'));
+              envoyerEmail(EMAIL_ADMIN, '[FRI] Complément HelloAsso reçu — ' + codeDossier,
+                'Paiement HelloAsso de ' + montantEur + ' € reçu pour le dossier ' + codeDossier + ' (dossier déjà réglé : complément).',
+                { name: 'FRI Admin' });
+              Logger.log('✅ Webhook HA — complément enregistré : ' + codeDossier + ' ' + montantEur + '€');
+            } else if (dejaValide || dejaTraite) {
               Logger.log('⚠️ Webhook HA — skip (déjàValidé:' + dejaValide + ' déjàTraité:' + !!dejaTraite + ') code:' + codeDossier + ' checkout:' + checkoutId);
             } else {
               verroProps.setProperty(verroKey, String(Date.now()));
@@ -4033,6 +4095,20 @@ function appliquerModificationDossier(params) {
       ? '<div style="margin:10px 0;padding:8px 14px;background:#e3f2fd;border-left:4px solid #1565c0;border-radius:4px;color:#1565c0">➕ Activité ajoutée : <strong>' + actNomClean + '</strong></div>'
       : '<div style="margin:10px 0;padding:8px 14px;background:#fff3e0;border-left:4px solid #e65100;border-radius:4px;color:#e65100">➖ Activité supprimée : <strong>' + actNomClean + '</strong></div>';
 
+    // Montant à régler : complément d'un dossier déjà réglé, ou total d'un dossier non réglé
+    var montantARegler = estRegle ? supplement : (typeModif === 'ajout' ? totalApres : 0);
+    var lienPaiement = '';
+    if (montantARegler > 0 && emailAdherent) {
+      var partsResp = String(responsable || '').trim().split(' ');
+      lienPaiement = creerLienPaiementEmail(code, montantARegler, emailAdherent,
+        partsResp[0] || '', partsResp.slice(1).join(' ') || '',
+        estRegle ? 'Complément dossier' : 'Règlement dossier');
+    }
+    var boutonPaiementHtml = lienPaiement
+      ? helloassoBoutonHtml(lienPaiement, montantARegler.toFixed(2) + ' €',
+          'Paiement sécurisé par carte bancaire — ou par chèque à l\'ordre du FRI / lors des permanences')
+      : '';
+
     var regleHtml = '';
     if (estRegle) {
       if (avoir > 0) {
@@ -4049,10 +4125,12 @@ function appliquerModificationDossier(params) {
         regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff8e1;border-left:4px solid #f9a825;border-radius:6px">'
           + '<div style="font-weight:700;color:#f57f17;margin-bottom:4px">⚠️ Supplément à régler : ' + supplement.toFixed(2) + ' €</div>'
           + '<div style="font-size:13px;color:#555">Merci de régler ce complément via HelloAsso ou par chèque à l\'ordre du FRI.</div>'
-          + '</div>';
+          + '</div>' + boutonPaiementHtml;
       } else {
         regleHtml = '<div style="margin:12px 0;padding:10px 14px;background:#f0f7f3;border-radius:4px;font-size:13px;color:#2d6a4f">✅ Aucune différence de règlement.</div>';
       }
+    } else if (boutonPaiementHtml) {
+      regleHtml = '<div style="margin:16px 0 0;font-weight:700;color:#1a2e22">Montant total de votre dossier à régler : ' + montantARegler.toFixed(2) + ' €</div>' + boutonPaiementHtml;
     }
 
     var bodyHtml = '<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto">'
@@ -4093,6 +4171,7 @@ function appliquerModificationDossier(params) {
         : supplement > 0 ? '\n\nSupplément à régler : ' + supplement.toFixed(2) + ' €'
         : '\n\nAucune différence de règlement.')
       : '';
+    if (lienPaiement) regleTexte += '\n\nRégler ' + montantARegler.toFixed(2) + ' € par HelloAsso : ' + lienPaiement;
 
     var bodyTexte = 'Bonjour ' + responsable + ',\n\n'
       + (typeModif === 'ajout' ? 'Activité ajoutée' : 'Activité supprimée') + ' : "' + actNomClean + '" — Dossier N°' + code + '\n\n'

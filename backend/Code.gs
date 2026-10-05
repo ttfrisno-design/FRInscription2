@@ -4124,13 +4124,19 @@ function appliquerModificationDossier(params) {
       } else if (supplement > 0) {
         regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff8e1;border-left:4px solid #f9a825;border-radius:6px">'
           + '<div style="font-weight:700;color:#f57f17;margin-bottom:4px">⚠️ Supplément à régler : ' + supplement.toFixed(2) + ' €</div>'
+          + '<div style="font-size:13px;color:#555;margin-bottom:4px">Déjà réglé : ' + totalPayeAvant.toFixed(2) + ' € — nouveau total du dossier : ' + totalApres.toFixed(2) + ' €'
+          + ' (l\'adhésion déjà réglée n\'est pas réclamée à nouveau).</div>'
           + '<div style="font-size:13px;color:#555">Merci de régler ce complément via HelloAsso ou par chèque à l\'ordre du FRI.</div>'
           + '</div>' + boutonPaiementHtml;
       } else {
         regleHtml = '<div style="margin:12px 0;padding:10px 14px;background:#f0f7f3;border-radius:4px;font-size:13px;color:#2d6a4f">✅ Aucune différence de règlement.</div>';
       }
-    } else if (boutonPaiementHtml) {
-      regleHtml = '<div style="margin:16px 0 0;font-weight:700;color:#1a2e22">Montant total de votre dossier à régler : ' + montantARegler.toFixed(2) + ' €</div>' + boutonPaiementHtml;
+    } else if (montantARegler > 0) {
+      // Dossier pas encore réglé : on réclame la totalité du dossier
+      regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff8e1;border-left:4px solid #f9a825;border-radius:6px">'
+        + '<div style="font-weight:700;color:#f57f17;margin-bottom:4px">⚠️ Votre dossier n\'est pas encore réglé — montant total à régler : ' + montantARegler.toFixed(2) + ' €</div>'
+        + '<div style="font-size:13px;color:#555">Via HelloAsso ci-dessous, par chèque à l\'ordre du FRI ou lors des permanences.</div>'
+        + '</div>' + boutonPaiementHtml;
     }
 
     var bodyHtml = '<div style="font-family:Arial,sans-serif;max-width:620px;margin:auto">'
@@ -4170,7 +4176,8 @@ function appliquerModificationDossier(params) {
       ? (avoir > 0 ? '\n\nAvoir enregistré : ' + avoir.toFixed(2) + ' €'
         : supplement > 0 ? '\n\nSupplément à régler : ' + supplement.toFixed(2) + ' €'
         : '\n\nAucune différence de règlement.')
-      : '';
+      : (montantARegler > 0 ? '\n\nVotre dossier n\'est pas encore réglé — montant total à régler : ' + montantARegler.toFixed(2) + ' €' : '');
+    if (estRegle && supplement > 0) regleTexte += ' (déjà réglé : ' + totalPayeAvant.toFixed(2) + ' €, nouveau total : ' + totalApres.toFixed(2) + ' €)';
     if (lienPaiement) regleTexte += '\n\nRégler ' + montantARegler.toFixed(2) + ' € par HelloAsso : ' + lienPaiement;
 
     var bodyTexte = 'Bonjour ' + responsable + ',\n\n'
@@ -4255,6 +4262,7 @@ function ajouterActiviteDossierSheet(payload) {
   var emailAdherent = '', responsable = '', adresse = '', cp = '', ville = '', tel1 = '', modePaiement = 'cheque';
   var totalActifExistant = 0;
   var membresExistants   = {};
+  var estRegleServeur    = false;
 
   var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
   if (sheet && sheet.getLastRow() > 1) {
@@ -4272,12 +4280,20 @@ function ajouterActiviteDossierSheet(payload) {
       }
       var statLigne = String(data[i][21] || '');
       if (statLigne.indexOf('supprimée') >= 0) continue;
+      // Dossier réglé ? même règle que modifierActivite (statut de paiement « validé » / « payé »)
+      var statLower = statLigne.toLowerCase();
+      if (statLower.indexOf('valid\u00e9') >= 0 || statLower.indexOf('pay\u00e9') >= 0) estRegleServeur = true;
       var isWaiting = String(data[i][39] || '').toLowerCase().indexOf('attente') >= 0;
       if (!isWaiting) totalActifExistant += Number(data[i][27] || 0);
       var mbKey = (String(data[i][3] || '') + ' ' + String(data[i][2] || '')).trim();
       membresExistants[mbKey] = true;
     }
   }
+
+  // Montant déjà dû / réglé AVANT l'ajout : activités (remise comprise) + adhésions FNSMR + FFTT.
+  // (Avant, l'adhésion déjà réglée n'était pas comptée : l'email réclamait 15 € de trop.)
+  var totalDossierAvant = 0;
+  try { totalDossierAvant = lireLignesRestantes(ss, code, null).totalNet || 0; } catch(eAv) { Logger.log('Total avant ajout KO : ' + eAv); }
 
   var nouveauMembreKey  = (membrePrenom + ' ' + membreNom).trim();
   var estNouveauMembre  = !membresExistants[nouveauMembreKey];
@@ -4454,8 +4470,10 @@ function ajouterActiviteDossierSheet(payload) {
   }
   var modifResult = appliquerModificationDossier({
     ss: ss, code: code, actNomClean: actNomClean2,
-    typeModif: 'ajout', estRegle: estRegle,
-    totalPayeAvant: estRegle ? (totalActifExistant + fnsmrNouvelleLigne) : 0,
+    // Email : le statut réel du dossier (Sheet) décide. Dossier réglé → seul le complément
+    // est réclamé ; dossier non réglé → le total du dossier est réclamé.
+    typeModif: 'ajout', estRegle: estRegleServeur,
+    totalPayeAvant: estRegleServeur ? totalDossierAvant : 0,
     emailAdherent: emailAdherent, responsable: responsable,
     modePaiement: modeLabel2,
     commentaireAdmin: payload.commentaireAdmin || '',

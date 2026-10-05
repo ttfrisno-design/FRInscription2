@@ -2115,6 +2115,13 @@ function traiterRequete(e) {
     if(payload.action==='demanderModification'){
       return repondreAvecCb(demanderModificationGAS(payload),null,null,callback);
     }
+    // ── Console admin : demandes de modification des familles ──
+    if(payload.action==='getDemandesModification'){
+      return repondreAvecCb(lireDemandesModification(),null,null,callback);
+    }
+    if(payload.action==='traiterDemandeModification'){
+      return repondreAvecCb(traiterDemandeModificationGAS(payload, sessionAdmin),null,null,callback);
+    }
     // ── Espace famille : message libre au Foyer Rural ──
     if(payload.action==='envoyerMessage'){
       return repondreAvecCb(envoyerMessageContactGAS(payload),null,null,callback);
@@ -2450,7 +2457,8 @@ var ACTIONS_ADMIN = [
   'getJournalSauvegardes', 'viderJournalSauvegardes', 'verifierDossiersPerdus',
   'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle',
   'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
-  'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques'
+  'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques',
+  'getDemandesModification', 'traiterDemandeModification'
 ];
 var REPONSE_ADMIN_REQUISE = {
   status: 'error', code: 'ADMIN_AUTH',
@@ -2854,29 +2862,111 @@ function lireDossierFamille(codeBrut, emailBrut) {
   }};
 }
 
-// Demande d'ajout / de retrait d'activités : email à l'admin + accusé de réception à la famille
+// ── Demandes de modification : onglet dédié, une ligne par ajout / retrait ──
+var SHEET_DEMANDES = 'Demandes modification';
+var COLS_DEMANDES = ['ID', 'Date', 'Dossier', 'Responsable', 'Email', 'Type', 'Membre',
+                     'ID activité', 'Activité', 'Commentaire', 'Statut', 'Traité le', 'Traité par', 'Réponse'];
+
+function getOrCreateDemandesSheet(ss) {
+  var sh = ss.getSheetByName(SHEET_DEMANDES);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_DEMANDES);
+    sh.getRange(1, 1, 1, COLS_DEMANDES.length).setValues([COLS_DEMANDES])
+      .setFontWeight('bold').setBackground('#1a2e22').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+// Demande d'ajout / de retrait d'activités : enregistrée pour la console admin,
+// email à l'admin + accusé de réception à la famille
 function demanderModificationGAS(p) {
   var lecture = lireDossierFamille(p.code, p.email);
   if (lecture.status !== 'ok') return lecture;
   var d = lecture.dossier;
   if (_compteurDepasse('dm_' + d.code, 5, 3600)) return {status:'error', message:'Trop de demandes pour ce dossier, réessayez plus tard.'};
-  var retraits = (Array.isArray(p.retraits) ? p.retraits : []).slice(0, 20).map(function(x) { return _texteCourt(x, 200); }).filter(String);
-  var ajouts   = (Array.isArray(p.ajouts)   ? p.ajouts   : []).slice(0, 20).map(function(x) { return _texteCourt(x, 200); }).filter(String);
-  var commentaire = _texteCourt(p.commentaire, 2000);
-  if (!retraits.length && !ajouts.length && !commentaire) return {status:'error', message:'Indiquez au moins une modification.'};
 
+  // Retraits : uniquement des activités réellement présentes dans le dossier
+  var presentes = {};
+  (d.membres || []).forEach(function(m) {
+    (m.activites || []).forEach(function(a) { presentes[(m.prenom + ' ' + m.nom).trim().toUpperCase() + '|' + a.id] = {membre: (m.prenom + ' ' + m.nom).trim(), act: a}; });
+  });
+  var items = [];
+  (Array.isArray(p.retraits) ? p.retraits : []).slice(0, 20).forEach(function(r) {
+    var k = _texteCourt(r && r.membre, 120).toUpperCase() + '|' + _texteCourt(r && r.actId, 60);
+    if (presentes[k]) items.push({type: 'Retrait', membre: presentes[k].membre, actId: presentes[k].act.id, actNom: presentes[k].act.nom});
+  });
+  (Array.isArray(p.ajouts) ? p.ajouts : []).slice(0, 20).forEach(function(a) {
+    var actId = _texteCourt(a && a.actId, 60);
+    if (!/^[a-z0-9-]+$/i.test(actId)) return;
+    items.push({type: 'Ajout', membre: _texteCourt(a.membre, 120) || 'Nouveau membre', actId: actId, actNom: _texteCourt(a.actNom, 200)});
+  });
+  var commentaire = _texteCourt(p.commentaire, 2000);
+  if (!items.length && !commentaire) return {status:'error', message:'Indiquez au moins une modification.'};
+  if (!items.length) items.push({type: 'Commentaire', membre: '', actId: '', actNom: ''});
+
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var sh = getOrCreateDemandesSheet(ss);
+  var maintenant = Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm');
+  var base = 'DM-' + Utilities.formatDate(new Date(), 'Europe/Paris', 'yyMMddHHmmss');
+  var lignes = items.map(function(it, i) {
+    return [base + '-' + (i + 1), maintenant, d.code, d.responsable, d.email, it.type, it.membre,
+            it.actId, it.actNom, commentaire, 'En attente', '', '', ''];
+  });
+  sh.getRange(sh.getLastRow() + 1, 1, lignes.length, COLS_DEMANDES.length).setValues(lignes);
+
+  var resume = items.filter(function(it) { return it.type !== 'Commentaire'; })
+    .map(function(it) { return (it.type === 'Ajout' ? '+ AJOUT : ' : '- RETRAIT : ') + it.membre + ' — ' + it.actNom; }).join('\n');
   var corps = 'Demande de modification — dossier ' + d.code + '\n'
     + 'Responsable : ' + d.responsable + ' <' + d.email + '>\n\n'
-    + (retraits.length ? 'ACTIVITÉS À RETIRER :\n- ' + retraits.join('\n- ') + '\n\n' : '')
-    + (ajouts.length   ? 'ACTIVITÉS À AJOUTER :\n- ' + ajouts.join('\n- ') + '\n\n' : '')
-    + (commentaire ? 'Commentaire :\n' + commentaire + '\n\n' : '')
-    + '→ À traiter dans la console admin (Modifier / Ajouter / Supprimer une activité).';
-  envoyerEmail(EMAIL_ADMIN, '[FRI] Demande de modification ' + d.code, corps, {name: NOM_ASSO, replyTo: d.email});
+    + (resume ? resume + '\n\n' : '')
+    + (commentaire ? 'Commentaire :\n' + commentaire + '\n\n' : '');
+  envoyerEmail(EMAIL_ADMIN, '[FRI] Demande de modification ' + d.code, corps
+    + '→ À valider dans la console admin, rubrique « Demandes de modification ».', {name: NOM_ASSO, replyTo: d.email});
   envoyerEmail(d.email, 'Foyer Rural — demande de modification reçue (' + d.code + ')',
     'Bonjour,\n\nNous avons bien reçu votre demande de modification pour le dossier ' + d.code + '.\n'
     + 'Elle sera traitée par l\'équipe du Foyer Rural, qui reviendra vers vous si un complément ou un règlement est nécessaire.\n\n'
-    + corps.split('\n→')[0] + '\nCordialement,\n' + NOM_ASSO, {name: NOM_ASSO});
+    + corps + 'Cordialement,\n' + NOM_ASSO, {name: NOM_ASSO});
   return {status:'ok'};
+}
+
+// Console admin : demandes en attente
+function lireDemandesModification() {
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_DEMANDES);
+  if (!sh || sh.getLastRow() < 2) return {status:'ok', demandes: []};
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, COLS_DEMANDES.length).getValues();
+  var demandes = [];
+  data.forEach(function(r) {
+    if (String(r[10]) !== 'En attente') return;
+    demandes.push({id: String(r[0]), date: r[1] instanceof Date ? Utilities.formatDate(r[1], 'Europe/Paris', 'dd/MM/yyyy HH:mm') : String(r[1]),
+      code: String(r[2]), responsable: String(r[3]), email: String(r[4]), type: String(r[5]), membre: String(r[6]),
+      actId: String(r[7]), actNom: String(r[8]), commentaire: String(r[9])});
+  });
+  return {status:'ok', demandes: demandes};
+}
+
+// Console admin : marquer une demande validée (après application) ou refusée (email à la famille)
+function traiterDemandeModificationGAS(p, session) {
+  var id = String(p.id || ''), statut = p.statut === 'Refusée' ? 'Refusée' : 'Validée';
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_DEMANDES);
+  if (!sh || sh.getLastRow() < 2) return {status:'error', message:'Demande introuvable'};
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, COLS_DEMANDES.length).getValues();
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][0]) !== id) continue;
+    if (String(data[i][10]) !== 'En attente') return {status:'ok', deja: true};
+    var reponse = _texteCourt(p.reponse, 1000);
+    sh.getRange(i + 2, 11, 1, 4).setValues([[statut, Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm'),
+      session ? session.user : '', reponse]]);
+    if (statut === 'Refusée' && _emailValide(data[i][4])) {
+      envoyerEmail(String(data[i][4]), 'Foyer Rural — votre demande de modification (' + data[i][2] + ')',
+        'Bonjour,\n\nVotre demande concernant le dossier ' + data[i][2] + ' n\'a pas pu être acceptée :\n'
+        + data[i][5] + ' — ' + data[i][6] + ' — ' + data[i][8] + '\n\n'
+        + (reponse ? 'Motif : ' + reponse + '\n\n' : '')
+        + 'N\'hésitez pas à nous contacter pour en parler.\n\nCordialement,\n' + NOM_ASSO, {name: NOM_ASSO});
+    }
+    return {status:'ok'};
+  }
+  return {status:'error', message:'Demande introuvable'};
 }
 
 // Message libre envoyé depuis le site

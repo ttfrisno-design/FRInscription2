@@ -1244,6 +1244,8 @@
       </button>
     </div>
 
+    <div id="admin-demandes" style="display:none;background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.5);border-radius:12px;padding:14px 16px;margin-bottom:16px;"></div>
+
     <div id="admin-table-container" style="background:rgba(255,255,255,0.04);border-radius:12px;padding:16px;overflow-x:auto">
       <p style="color:rgba(255,255,255,0.4);font-size:14px;">Aucune inscription enregistrée.</p>
     </div>
@@ -7621,6 +7623,7 @@ async function doAdminLogin() {
       try { if (isFullAdmin()) renderSemainierSalle(); } catch(e) {}
       document.getElementById('admin-panel').scrollIntoView({ behavior: 'smooth' });
       try { chargerDossiersDepuisSheet(); } catch(e) {}
+      try { chargerDemandesModification(); } catch(e) {}
     } else {
       errEl.textContent = '❌ ' + ((data && data.message) || 'Identifiant ou mot de passe incorrect.');
       errEl.style.display = 'block';
@@ -10357,6 +10360,7 @@ async function confirmerAjoutActivite(code, actId, membreIdx, prixFinal, enListe
   try {
     const gasResult = await callAppsScriptFetch(url, payload);
     console.log('[FRI] ✅ ajouterActiviteDossier envoyé', gasResult);
+    marquerDemandeAppliquee(code, actId);
     // ── Mettre à jour grandTotal depuis le vrai total retourné par le GAS ──
     // Le GAS recalcule remise 15% + FNSMR + FFTT → total exact
     if (gasResult && gasResult.nouveauTotal && gasResult.nouveauTotal > 0) {
@@ -10601,6 +10605,7 @@ async function executerSuppressionActivite(code, l, membre, estRegle, avoir, aRe
           commentaireAdmin: commentaireAdmin || '',
           montantModifie:   montantModifie === true
         });
+        marquerDemandeAppliquee(code, l.actId);
         // ── Mettre à jour grandTotal depuis le vrai total retourné par le GAS ──
         await chargerDossiersDepuisSheet();
         try { renderAdmin(); } catch(e) {}
@@ -10641,6 +10646,7 @@ async function executerSuppressionActivite(code, l, membre, estRegle, avoir, aRe
           commentaireAdmin: commentaireAdmin || '',
           montantModifie:   montantModifie === true
         });
+        marquerDemandeAppliquee(code, l.actId);
         // Recharger depuis le Sheet — le total AF fait foi
         await chargerDossiersDepuisSheet();
         try { renderAdmin(); } catch(e) {}
@@ -10980,9 +10986,11 @@ function afficherFormulaireModification() {
   html += '<div class="card"><div class="card-title">➖ Activités à retirer</div>';
   let n = 0;
   (d.membres || []).forEach(m => (m.activites || []).forEach(a => {
-    const libelle = (m.prenom + ' ' + m.nom).trim() + ' : ' + a.nom.replace(/\n/g, ' — ') + (a.jour ? ' (' + a.jour + (a.heure ? ' ' + a.heure : '') + ')' : '');
+    const membre = (m.prenom + ' ' + m.nom).trim();
+    const libelle = membre + ' : ' + a.nom.replace(/\n/g, ' — ') + (a.jour ? ' (' + a.jour + (a.heure ? ' ' + a.heure : '') + ')' : '');
     html += '<label style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:14px;cursor:pointer;">'
-      + '<input type="checkbox" class="modif-retrait" value="' + escHtml(libelle) + '" style="margin-top:3px;"> ' + escHtml(libelle) + '</label>';
+      + '<input type="checkbox" class="modif-retrait" data-membre="' + escHtml(membre) + '" data-act="' + escHtml(a.id) + '" data-nom="' + escHtml(a.nom) + '" style="margin-top:3px;"> '
+      + escHtml(libelle) + '</label>';
     n++;
   }));
   if (!n) html += '<p style="color:var(--gray);font-size:14px;">Aucune activité enregistrée.</p>';
@@ -11011,8 +11019,8 @@ function ajouterDemandeActivite() {
   const act = getActById(selA.value);
   if (!act) { showToast('Choisissez une activité', 'orange'); return; }
   const pour = selM.value === '__nouveau' ? 'Nouveau membre' : selM.value;
-  const libelle = pour + ' : ' + act.name.replace(/\n/g, ' — ') + ' (' + (act.jour || '') + ' ' + (act.heure || '') + ')';
-  if (_ajoutsDemandes.indexOf(libelle) < 0) _ajoutsDemandes.push(libelle);
+  const actNom = act.name.replace(/\n/g, ' — ') + ' (' + (act.jour || '') + ' ' + (act.heure || '') + ')';
+  if (!_ajoutsDemandes.some(x => x.membre === pour && x.actId === act.id)) _ajoutsDemandes.push({ membre: pour, actId: act.id, actNom: actNom });
   selA.value = '';
   majListeAjouts();
 }
@@ -11022,13 +11030,14 @@ function retirerDemandeActivite(i) { _ajoutsDemandes.splice(i, 1); majListeAjout
 function majListeAjouts() {
   const ul = document.getElementById('modif-liste-ajouts');
   if (ul) ul.innerHTML = _ajoutsDemandes.map((l, i) =>
-    '<li style="margin-bottom:4px;">' + escHtml(l) + ' <button type="button" class="lien-retour" style="margin:0;padding:0 6px;color:var(--red)" onclick="retirerDemandeActivite(' + i + ')" aria-label="Retirer">✕</button></li>').join('');
+    '<li style="margin-bottom:4px;">' + escHtml(l.membre + ' : ' + l.actNom) + ' <button type="button" class="lien-retour" style="margin:0;padding:0 6px;color:var(--red)" onclick="retirerDemandeActivite(' + i + ')" aria-label="Retirer">✕</button></li>').join('');
 }
 
 async function envoyerDemandeModification() {
   const msg = document.getElementById('modif-msg');
   const btn = document.getElementById('btn-envoyer-modif');
-  const retraits = Array.from(document.querySelectorAll('.modif-retrait:checked')).map(c => c.value);
+  const retraits = Array.from(document.querySelectorAll('.modif-retrait:checked'))
+    .map(c => ({ membre: c.dataset.membre, actId: c.dataset.act, actNom: c.dataset.nom }));
   const commentaire = (document.getElementById('modif-commentaire')?.value || '').trim();
   if (!retraits.length && !_ajoutsDemandes.length && !commentaire) {
     msg.innerHTML = '<span style="color:var(--red)">Cochez une activité à retirer, ajoutez-en une ou écrivez un commentaire.</span>';
@@ -11092,6 +11101,123 @@ async function envoyerMessageFamille() {
   } finally {
     btn.disabled = false; btn.textContent = '✉️ Envoyer';
   }
+}
+</script>
+
+<script>
+// ============================================================
+// CONSOLE ADMIN — DEMANDES DE MODIFICATION DES FAMILLES
+// « Appliquer » ouvre la fenêtre d'ajout / de suppression déjà pré-remplie ;
+// la demande passe en « Validée » dès que la modification est confirmée.
+// ============================================================
+let _demandesModif = [];
+let _demandeEnCours = null; // { id, code, actId }
+
+async function chargerDemandesModification() {
+  const url = getAppsScriptUrl();
+  if (!url) return;
+  try {
+    const r = await callAppsScriptFetch(url, { action: 'getDemandesModification' });
+    const d = r && r.data ? nettoyerTexteRecu(r.data) : null;
+    _demandesModif = (d && d.status === 'ok' && Array.isArray(d.demandes)) ? d.demandes : [];
+  } catch(e) { console.warn('[FRI] demandes de modification KO:', e); }
+  afficherDemandesModification();
+}
+
+function afficherDemandesModification() {
+  const bloc = document.getElementById('admin-demandes');
+  if (!bloc) return;
+  if (!_demandesModif.length) { bloc.style.display = 'none'; bloc.innerHTML = ''; return; }
+  const icone = { Ajout: '➕', Retrait: '➖', Commentaire: '💬' };
+  const couleur = { Ajout: '#52b788', Retrait: '#e57373', Commentaire: '#c9a84c' };
+  bloc.style.display = 'block';
+  bloc.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">'
+    + '<div style="color:#f4d58d;font-weight:700;font-size:15px;">🔔 Demandes de modification des familles (' + _demandesModif.length + ')</div>'
+    + '<button onclick="chargerDemandesModification()" style="background:none;border:1px solid rgba(255,255,255,0.3);color:white;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;">🔄 Actualiser</button></div>'
+    + _demandesModif.map(dm => {
+        const appliquable = dm.type === 'Ajout' || dm.type === 'Retrait';
+        return '<div style="background:rgba(255,255,255,0.06);border-left:4px solid ' + (couleur[dm.type] || '#999') + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;color:white;font-size:13px;">'
+          + '<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;">'
+          + '<div><strong>' + (icone[dm.type] || '') + ' ' + escHtml(dm.type) + '</strong> — ' + escHtml(dm.membre)
+          + (dm.actNom ? ' — <strong>' + escHtml(dm.actNom) + '</strong>' : '') + '<br>'
+          + '<span style="opacity:0.7;font-size:12px;">Dossier ' + escHtml(dm.code) + ' · ' + escHtml(dm.responsable) + ' · ' + escHtml(dm.date) + '</span>'
+          + (dm.commentaire ? '<div style="margin-top:4px;font-style:italic;opacity:0.85;">« ' + escHtml(dm.commentaire) + ' »</div>' : '')
+          + '</div>'
+          + '<div style="display:flex;gap:6px;align-items:flex-start;">'
+          + (appliquable ? '<button onclick="appliquerDemandeModification(\'' + escHtml(dm.id) + '\')" style="background:#2d6a4f;color:white;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">✅ Appliquer</button>'
+                         : '<button onclick="traiterDemandeModification(\'' + escHtml(dm.id) + '\',\'Validée\')" style="background:#2d6a4f;color:white;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">✔ Traitée</button>')
+          + '<button onclick="refuserDemandeModification(\'' + escHtml(dm.id) + '\')" style="background:rgba(192,57,43,0.8);color:white;border:none;border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer;">✖ Refuser</button>'
+          + '</div></div></div>';
+      }).join('');
+}
+
+function _membreIndexPourDemande(reg, nomMembre) {
+  const cible = String(nomMembre || '').trim().toUpperCase();
+  const membres = reg && reg.members ? reg.members : [];
+  const idx = membres.findIndex(m => ((m.prenom || '') + ' ' + (m.nom || '')).trim().toUpperCase() === cible);
+  return idx;
+}
+
+function appliquerDemandeModification(id) {
+  if (!requireAdmin()) return;
+  const dm = _demandesModif.find(x => x.id === id);
+  if (!dm) return;
+  _demandeEnCours = { id: dm.id, code: dm.code, actId: dm.actId };
+  if (dm.type === 'Ajout') {
+    if (!getActById(dm.actId)) { showAdminToast('Activité inconnue : ' + dm.actNom, 'orange'); return; }
+    ouvrirAjoutActivite(dm.code);
+    setTimeout(() => {
+      const modal = document.getElementById('modal-ajout-activite');
+      if (!modal) return;
+      const sel = document.getElementById('ajout-membre-select');
+      const idx = _membreIndexPourDemande(modal._reg, dm.membre);
+      if (sel && idx >= 0) sel.value = String(idx);
+      if (idx < 0) showAdminToast('⚠️ Membre « ' + dm.membre + ' » absent du dossier : choisissez-le ou ajoutez-le avant de confirmer.', 'orange');
+      else selectionnerActiviteAjout(dm.code, dm.actId);
+    }, 300);
+  } else if (dm.type === 'Retrait') {
+    ouvrirSupprActivite(dm.code);
+    setTimeout(() => {
+      const modal = document.getElementById('modal-suppr-activite');
+      if (!modal || !modal._lignes) return;
+      const cible = String(dm.membre || '').trim().toUpperCase();
+      // Le Sheet enregistre l'identifiant « places » (ex. YOGAM1430), le site l'identifiant d'activité
+      const memeAct = l => l.actId === dm.actId || l.placesId === dm.actId || siteToPlacesId(l.actId) === dm.actId;
+      let i = modal._lignes.findIndex(l => memeAct(l) && String(l.membreNom || '').trim().toUpperCase() === cible);
+      if (i < 0) i = modal._lignes.findIndex(memeAct);
+      if (i < 0) { showAdminToast('⚠️ Activité introuvable dans le dossier : choisissez-la dans la liste.', 'orange'); _demandeEnCours.actId = ''; return; }
+      _demandeEnCours.actId = modal._lignes[i].actId;
+      confirmerSupprActivite(dm.code, i);
+    }, 300);
+  }
+}
+
+// Appelé quand un ajout / une suppression vient d'être confirmé dans les fenêtres admin
+function marquerDemandeAppliquee(code, actId) {
+  const enCours = _demandeEnCours;
+  if (!enCours || enCours.code !== code || (enCours.actId && enCours.actId !== actId)) return;
+  _demandeEnCours = null;
+  traiterDemandeModification(enCours.id, 'Validée');
+}
+
+async function traiterDemandeModification(id, statut, reponse) {
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'traiterDemandeModification', id: id, statut: statut, reponse: reponse || '' });
+    const d = r && r.data;
+    if (d && d.status === 'ok') {
+      _demandesModif = _demandesModif.filter(x => x.id !== id);
+      afficherDemandesModification();
+      showAdminToast(statut === 'Refusée' ? '✖ Demande refusée — la famille est prévenue par email' : '✅ Demande marquée comme validée', 'green');
+    } else {
+      showAdminToast('⚠️ ' + ((d && d.message) || 'Mise à jour de la demande impossible'), 'orange');
+    }
+  } catch(e) { showAdminToast('❌ ' + e.message, 'red'); }
+}
+
+function refuserDemandeModification(id) {
+  const motif = prompt('Motif du refus (envoyé à la famille, facultatif) :', '');
+  if (motif === null) return;
+  traiterDemandeModification(id, 'Refusée', motif);
 }
 </script>
 

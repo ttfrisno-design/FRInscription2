@@ -1,0 +1,39 @@
+# Publication du site sur GitHub Pages à chaque envoi sur main.
+# (La publication automatique « Deploy from a branch » n'est pas déclenchée
+#  par les envois faits via une application GitHub ; ce workflow, si.)
+# Réglage nécessaire une fois : Settings › Pages › Source : « GitHub Actions ».
+name: Publier le site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Préparer les fichiers publiés
+        run: |
+          mkdir _site
+          cp index.html _site/
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploiement
+        uses: actions/deploy-pages@v4

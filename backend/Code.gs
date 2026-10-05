@@ -644,7 +644,7 @@ function pagePaiementEmail(jeton) {
     return HtmlService.createHtmlOutput('<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'
       + '<body style="font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f2">'
       + '<div style="background:white;border-radius:14px;padding:32px 24px;max-width:480px;width:100%;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.1)">'
-      + '<div style="font-size:40px">&#x1F3E1;</div><h2 style="color:#1a2e22">' + NOM_ASSO + '</h2>' + contenu + '</div></body></html>')
+      + '<div style="font-size:40px">🏡</div><h2 style="color:#1a2e22">' + NOM_ASSO + '</h2>' + contenu + '</div></body></html>')
       .setTitle('Règlement — ' + NOM_ASSO);
   };
   if (!info) return page('<p>Ce lien de paiement n\'est plus valable.</p><p style="color:#666;font-size:14px">Contactez-nous : frisneauville@orange.fr — 02.35.59.01.01</p>');
@@ -666,7 +666,7 @@ function helloassoBoutonHtml(lienCheckout, montantLabel, noteOverride) {
   var noteHtml = noteOverride
     ? '<div style="font-size:11px;color:#666;margin-top:4px;">' + noteOverride + '</div>'
     : lienCheckout
-    ? '<div style="font-size:11px;color:#666;margin-top:4px;">&#x1F512; Formulaire pré-rempli à votre nom — valable 15 min</div>'
+    ? '<div style="font-size:11px;color:#666;margin-top:4px;">🔒 Formulaire pré-rempli à votre nom — valable 15 min</div>'
     : '<div style="font-size:11px;color:#666;margin-top:4px;">Ou lors des permanences : mardis 16h30-18h30</div>';
   var bouton = '<a href="'+lien+'" style="text-decoration:none;display:inline-block;">'
     +'<div style="display:inline-flex;align-items:stretch;border-radius:8px;overflow:hidden;font-family:\'Open Sans\',Arial,sans-serif;">'
@@ -681,7 +681,7 @@ function helloassoBoutonHtml(lienCheckout, montantLabel, noteOverride) {
     +'<img src="https://helloassodocumentsprod.blob.core.windows.net/public-documents/bouton_payer_avec_helloasso/logo-cb.svg" alt="CB" style="height:14px;" />'
     +'<img src="https://helloassodocumentsprod.blob.core.windows.net/public-documents/bouton_payer_avec_helloasso/logo-pci.svg" alt="PCI" style="height:14px;" /></div>';
   return '<div style="background:#f8f9ff;border:1.5px solid #4c40cf;border-radius:12px;padding:16px 20px;text-align:center;margin:16px 0;">'
-    +(lienCheckout ? '<div style="font-size:12px;color:#4c40cf;font-weight:600;margin-bottom:6px;">&#x1F3AF; Formulaire pré-rempli à votre nom</div>' : '')
+    +(lienCheckout ? '<div style="font-size:12px;color:#4c40cf;font-weight:600;margin-bottom:6px;">🎯 Formulaire pré-rempli à votre nom</div>' : '')
     +montantHtml+'<div style="display:flex;justify-content:center;">'+bouton+'</div>'
     +'<div style="display:flex;justify-content:center;">'+secureBar+'</div>'+noteHtml+'</div>';
 }
@@ -2415,20 +2415,20 @@ function traiterRequete(e) {
         var htmlBody = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>'
           + '<div style="font-family:sans-serif;max-width:600px;margin:auto;">'
           + '<div style="background:#1b5e20;padding:18px 24px;border-radius:8px 8px 0 0;">'
-          + '<h2 style="color:#fff;margin:0;font-size:18px;">Dossier '+code+' - Pi&#232;ce(s) manquante(s)</h2>'
+          + '<h2 style="color:#fff;margin:0;font-size:18px;">Dossier '+code+' - Pièce(s) manquante(s)</h2>'
           + '<p style="color:#a5d6a7;margin:6px 0 0;font-size:13px;">'+NOM_ASSO+' - Saison 2026/2027</p>'
           + '</div>'
           + '<div style="background:#fff8e1;border:1px solid #ffe082;padding:16px 24px;">'
           + '<p style="color:#333;font-size:14px;">Bonjour '+nom+',</p>'
-          + '<p style="color:#333;font-size:14px;">Votre dossier d&#39;inscription <strong>'+code+'</strong> est bien enregistr&#233;.<br>'
-          + 'Cependant, il nous manque encore la ou les pi&#232;ce(s) suivante(s) pour valider votre inscription :</p>'
+          + '<p style="color:#333;font-size:14px;">Votre dossier d&#39;inscription <strong>'+code+'</strong> est bien enregistré.<br>'
+          + 'Cependant, il nous manque encore la ou les pièce(s) suivante(s) pour valider votre inscription :</p>'
           + '<ul style="margin:12px 0;padding-left:20px;font-size:14px;">'+listHtml+'</ul>'
           + '<p style="color:#333;font-size:14px;">Merci de nous les faire parvenir :</p>'
           + '<ul style="font-size:13px;color:#555;">'
-          + '<li>En permanence : <strong>mardi 16h30-18h30</strong> (p&#233;riode scolaire) - Salle des f&#234;tes, Place A. Cramilly, Isneauville</li>'
+          + '<li>En permanence : <strong>mardi 16h30-18h30</strong> (période scolaire) - Salle des fêtes, Place A. Cramilly, Isneauville</li>'
           + '<li>Par email : <a href="mailto:frisneauville@orange.fr">frisneauville@orange.fr</a></li>'
           + '</ul>'
-          + '<p style="color:#555;font-size:13px;margin-top:16px;">Votre inscription ne sera d&#233;finitivement valid&#233;e qu&#39;&#224; r&#233;ception de l&#39;ensemble des pi&#232;ces et du r&#232;glement.</p>'
+          + '<p style="color:#555;font-size:13px;margin-top:16px;">Votre inscription ne sera définitivement validée qu&#39;à réception de l&#39;ensemble des pièces et du règlement.</p>'
           + '</div>'
           + '<div style="background:#f5f5f5;padding:12px 24px;border-radius:0 0 8px 8px;font-size:11px;color:#888;text-align:center;">'
           + NOM_ASSO+' - Tel : 02.35.59.01.01 - frisneauville@orange.fr'
@@ -2464,17 +2464,17 @@ function traiterRequete(e) {
         var htmlBody2 = '<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>'
           + '<div style="font-family:sans-serif;max-width:600px;margin:auto;">'
           + '<div style="background:#1b5e20;padding:18px 24px;border-radius:8px 8px 0 0;">'
-          + '<h2 style="color:#fff;margin:0;font-size:18px;">Dossier '+code2+' - Pi&#232;ce(s) manquante(s)</h2>'
+          + '<h2 style="color:#fff;margin:0;font-size:18px;">Dossier '+code2+' - Pièce(s) manquante(s)</h2>'
           + '<p style="color:#a5d6a7;margin:6px 0 0;font-size:13px;">'+NOM_ASSO+' - Saison 2026/2027</p>'
           + '</div>'
           + '<div style="background:#fff8e1;border:1px solid #ffe082;padding:16px 24px;">'
           + '<p style="color:#333;font-size:14px;">Bonjour '+nom2+',</p>'
-          + '<p style="color:#333;font-size:14px;">Votre dossier d\'inscription <strong>'+code2+'</strong> est bien enregistr&#233;.<br>'
-          + 'Cependant, il nous manque encore la ou les pi&#232;ce(s) suivante(s) :</p>'
+          + '<p style="color:#333;font-size:14px;">Votre dossier d\'inscription <strong>'+code2+'</strong> est bien enregistré.<br>'
+          + 'Cependant, il nous manque encore la ou les pièce(s) suivante(s) :</p>'
           + '<ul style="margin:12px 0;padding-left:20px;font-size:14px;">'+listHtml2+'</ul>'
           + '<p style="color:#333;font-size:14px;">Merci de nous les faire parvenir :</p>'
           + '<ul style="font-size:13px;color:#555;">'
-          + '<li>En permanence : <strong>mardi 16h30-18h30</strong> (p&#233;riode scolaire) - Salle des f&#234;tes, Place A. Cramilly, Isneauville</li>'
+          + '<li>En permanence : <strong>mardi 16h30-18h30</strong> (période scolaire) - Salle des fêtes, Place A. Cramilly, Isneauville</li>'
           + '<li>Par email : <a href="mailto:frisneauville@orange.fr">frisneauville@orange.fr</a></li>'
           + '</ul></div>'
           + '<div style="background:#f5f5f5;padding:12px 24px;border-radius:0 0 8px 8px;font-size:11px;color:#888;text-align:center;">'
@@ -2904,6 +2904,32 @@ function corrigerDatesNaissance() {
     if (sh.getName() !== SHEET_INSCRIPTIONS && /naiss|ddn/i.test(entete)) corriger(sh, 6);
   });
   Logger.log('✅ ' + nb + ' date(s) de naissance corrigée(s)');
+}
+
+// Outil de réparation (à exécuter une fois depuis l'éditeur) : remplace dans toutes les cellules
+// texte de la feuille les codes HTML écrits par erreur (ex. « &#x1F5D1; Activité supprimée »)
+// par le vrai caractère (« 🗑 Activité supprimée »).
+function corrigerEmoticonesFeuille() {
+  var ss = SpreadsheetApp.openById(SHEET_ID), nb = 0;
+  var decoder = function(t) {
+    return t.replace(/&#(x[0-9a-f]+|\d+);/gi, function(m, v) {
+      var c = v.charAt(0).toLowerCase() === 'x' ? parseInt(v.substring(1), 16) : parseInt(v, 10);
+      try { return String.fromCodePoint(c); } catch(e) { return m; }
+    }).replace(/&amp;/g, '&');
+  };
+  ss.getSheets().forEach(function(sh) {
+    var lr = sh.getLastRow(), lc = sh.getLastColumn();
+    if (lr < 1 || lc < 1) return;
+    var rg = sh.getRange(1, 1, lr, lc), vals = rg.getValues(), formules = rg.getFormulas(), modif = false;
+    for (var i = 0; i < vals.length; i++) for (var j = 0; j < vals[i].length; j++) {
+      var v = vals[i][j];
+      if (typeof v === 'string' && v.indexOf('&#') >= 0 && !formules[i][j]) {
+        var d = decoder(v);
+        if (d !== v) { sh.getRange(i + 1, j + 1).setValue(d); nb++; }
+      }
+    }
+  });
+  Logger.log('✅ ' + nb + ' cellule(s) corrigée(s)');
 }
 
 // Retire les caractères < et > des textes saisis dans le formulaire public :
@@ -4278,7 +4304,7 @@ function appliquerModificationDossier(params) {
           + '<div style="font-weight:700;color:#e65100;margin-bottom:6px">Aucun avoir</div>' + detailRetenuesHtml + '</div>';
       } else if (avoir > 0) {
         regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff3e0;border-left:4px solid #e65100;border-radius:6px">'
-          + '<div style="font-weight:700;color:#e65100;margin-bottom:6px">&#x1F4B3; Avoir enregistré : ' + avoir.toFixed(2) + ' €</div>'
+          + '<div style="font-weight:700;color:#e65100;margin-bottom:6px">💳 Avoir enregistré : ' + avoir.toFixed(2) + ' €</div>'
           + (codeAvoirGenere ? '<div style="background:#d8f3dc;border:2px solid #52b788;border-radius:8px;padding:10px 14px;margin:8px 0;text-align:center">'
             + '<div style="font-size:11px;font-weight:700;color:#2d6a4f;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Votre code avoir</div>'
             + '<div style="font-family:monospace;font-size:26px;font-weight:900;color:#1a2e22;letter-spacing:6px">' + codeAvoirGenere + '</div>'
@@ -4795,7 +4821,7 @@ function supprimerActiviteDossierSheet(code, actNom, actId, membreNom, avoirMont
         || (actNomClean.toLowerCase().length >= 8 && act2.indexOf(actNomClean.toLowerCase().substring(0, 15)) >= 0);
       if (!isCible2) continue;
       sheet.getRange(j + 2, 1, 1, 41).setBackground('#ffe0b2');
-      sheet.getRange(j + 2, 22).setValue('&#x1F5D1; Activité supprimée').setFontColor('#e65100').setFontWeight('bold');
+      sheet.getRange(j + 2, 22).setValue('🗑 Activité supprimée').setFontColor('#e65100').setFontWeight('bold');
       sheet.getRange(j + 2, 40).setValue('Supprimée').setFontColor('#bf360c').setFontWeight('bold');
       sheet.getRange(j + 2, 30).setValue(0).setFontColor('#e65100'); // col 30 AD = 0 (ligne supprimée)
       ligneSupprimeeRow = j + 2;
@@ -5348,7 +5374,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
 
   var lignesHtml = '';
   Object.keys(parMembre).forEach(function(membre) {
-    lignesHtml += '<tr><td colspan="5" style="background:#2d6a4f;color:white;padding:7px 10px;font-weight:bold;font-size:13px">&#x1F464; ' + membre + '</td></tr>';
+    lignesHtml += '<tr><td colspan="5" style="background:#2d6a4f;color:white;padding:7px 10px;font-weight:bold;font-size:13px">👤 ' + membre + '</td></tr>';
     parMembre[membre].forEach(function(r) {
       var statutR = String(r.statut_inscription||'').toLowerCase();
       var isAttente  = statutR.indexOf('attente') >= 0;
@@ -5382,7 +5408,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
     });
     // FFTT
     if (f.ffttMembres[membre]) {
-      lignesHtml += '<tr style="background:#fff3e0"><td style="padding:6px 10px;font-size:12px;color:#e65100" colspan="2">&#x1F3D3; Licence FFTT — ' + membre + '</td>'
+      lignesHtml += '<tr style="background:#fff3e0"><td style="padding:6px 10px;font-size:12px;color:#e65100" colspan="2">🏓 Licence FFTT — ' + membre + '</td>'
         + '<td style="padding:6px 10px;text-align:right;font-weight:bold;color:#e65100">' + f.ffttMembres[membre].toFixed(2) + ' €</td></tr>';
     }
   });
@@ -5422,7 +5448,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
     } else {
       totalNonPaye += f.totalFftt;
       lignesBilanHtml += '<tr style="background:#fff8e1">'
-        + '<td style="padding:5px 8px;font-size:12px">&#x1F3D3; Licence(s) FFTT</td>'
+        + '<td style="padding:5px 8px;font-size:12px">🏓 Licence(s) FFTT</td>'
         + '<td style="text-align:right;color:#e65100;padding:5px 8px;font-size:12px">⏳ ' + f.totalFftt.toFixed(2) + ' €</td></tr>';
     }
   }
@@ -5432,7 +5458,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
 
   var blocRegler = soldeNet > 0
     ? '<div style="background:#fff3e0;border:2px solid #e65100;border-radius:10px;padding:14px 18px;margin:16px 0">'
-      + '<div style="font-weight:bold;font-size:15px;color:#e65100;margin-bottom:8px">&#x1F4B3; Solde à régler pour votre dossier</div>'
+      + '<div style="font-weight:bold;font-size:15px;color:#e65100;margin-bottom:8px">💳 Solde à régler pour votre dossier</div>'
       + '<table style="width:100%;border-collapse:collapse;font-size:13px">'
       + lignesBilanHtml
       + (totalDejaRegle > 0
@@ -5448,7 +5474,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
       + '</table>'
       + '<div style="margin-top:12px;font-size:12px;color:#777;line-height:1.7">'
       + '<strong>Comment régler ?</strong><br>'
-      + '&#x1F4B3; En ligne via HelloAsso · &#x1F4C5; Aux permanences (mardi 16h30–18h30) · ✉️ Chèque à l\'ordre du FRI'
+      + '💳 En ligne via HelloAsso · 📅 Aux permanences (mardi 16h30–18h30) · ✉️ Chèque à l\'ordre du FRI'
       + '</div>'
       + helloassoBoutonHtml(null, soldeNet > 0 ? soldeNet.toFixed(2) + ' €' : null)
       + '</div>'
@@ -5486,7 +5512,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
     + '<h1 style="color:white;margin:0;font-size:19px">Place disponible — Inscription confirmée !</h1>'
     + '<p style="color:#52b788;margin:5px 0 0;font-size:13px">' + NOM_ASSO + ' — Saison 2026/2027</p></div>'
     + '<div style="background:#fff8e1;padding:10px 20px;text-align:center;font-weight:bold;color:#856404;border-bottom:2px solid #e8c84a">'
-    + '&#x1F389; Une place s\'est libérée pour <strong>' + actNomBasculee.replace(/\n/g,' — ') + '</strong></div>'
+    + '🎉 Une place s\'est libérée pour <strong>' + actNomBasculee.replace(/\n/g,' — ') + '</strong></div>'
     + '<div style="padding:20px 24px">'
     + '<p style="color:#333">Bonjour <strong>' + prenom + ' ' + nom + '</strong>,</p>'
     + '<p style="color:#555;line-height:1.7">Suite à un désistement, une place s\'est libérée dans l\'activité <strong>' + actNomBasculee.replace(/\n/g,' — ') + '</strong>. Votre inscription est maintenant <strong>confirmée</strong>.</p>'
@@ -6127,7 +6153,7 @@ function _htmlPartie1Activites(f, isAdminView) {
   Object.keys(f.parMembre).forEach(function(membre) {
     // Ligne d'en-tête membre
     var colspanMembre = f.aRemise ? 5 : 3;
-    html += '<tr><td colspan="' + colspanMembre + '" style="background:#2d6a4f;color:white;padding:7px 10px;font-weight:bold;font-size:13px">&#x1F464; ' + membre + '</td></tr>';
+    html += '<tr><td colspan="' + colspanMembre + '" style="background:#2d6a4f;color:white;padding:7px 10px;font-weight:bold;font-size:13px">👤 ' + membre + '</td></tr>';
 
     f.parMembre[membre].forEach(function(r) {
       var b = parseFloat(r.tarif_brut)||parseFloat(r.tarif)||0;
@@ -6192,7 +6218,7 @@ function _htmlPartie1Activites(f, isAdminView) {
     if (f.ffttMembres[membre]) {
       var colspanFftt = f.aRemise ? 4 : 2;
       html += '<tr style="background:#fff3e0">';
-      html += '<td style="padding:6px 10px;font-size:12px;color:#e65100" colspan="2">&#x1F3D3; Licence FFTT — ' + membre + '</td>';
+      html += '<td style="padding:6px 10px;font-size:12px;color:#e65100" colspan="2">🏓 Licence FFTT — ' + membre + '</td>';
       if (f.aRemise) {
         html += '<td style="padding:6px 10px;text-align:right" colspan="2"></td>';
       }
@@ -6207,7 +6233,7 @@ function _htmlPartie1Activites(f, isAdminView) {
     html += '<tr style="background:#e8f5e9"><td colspan="' + colspan0 + '" style="padding:7px 10px;font-size:12px;color:#2d6a4f">Sous-total activités (brut)</td>'
       + '<td style="padding:7px 10px;text-align:right;font-size:12px">' + f.totalBrut.toFixed(2) + ' €</td>'
       + '<td style="padding:7px 10px;text-align:right;font-weight:bold;font-size:12px;color:#2d6a4f"></td></tr>';
-    html += '<tr style="background:#d8f3dc"><td colspan="' + colspan0 + '" style="padding:7px 10px;font-size:12px;color:#2d6a4f">&#x1F389; Remise famille −15% (' + f.nbEligibles + ' activité(s) éligible(s))</td>'
+    html += '<tr style="background:#d8f3dc"><td colspan="' + colspan0 + '" style="padding:7px 10px;font-size:12px;color:#2d6a4f">🎉 Remise famille −15% (' + f.nbEligibles + ' activité(s) éligible(s))</td>'
       + '<td style="padding:7px 10px;text-align:right;font-weight:bold;color:#2d6a4f">− ' + f.totalRemise.toFixed(2) + ' €</td>'
       + '<td style="padding:7px 10px;text-align:right;font-weight:bold;color:#1b5e20">' + f.totalNet.toFixed(2) + ' €</td></tr>';
   }
@@ -6221,7 +6247,7 @@ function _htmlPartie1Activites(f, isAdminView) {
   html += '</tbody></table>';
   if (f.aRemise) {
     html += '<div style="background:#d8f3dc;border:1px solid #52b788;border-radius:6px;padding:9px 12px;margin-top:6px;font-size:12px;color:#1b5e20">'
-      + '&#x1F389; <strong>Remise famille −15% appliquée</strong> — économie de <strong>' + f.totalRemise.toFixed(2) + ' €</strong> sur ' + f.nbEligibles + ' activité(s)</div>';
+      + '🎉 <strong>Remise famille −15% appliquée</strong> — économie de <strong>' + f.totalRemise.toFixed(2) + ' €</strong> sur ' + f.nbEligibles + ' activité(s)</div>';
   }
   return html;
 }
@@ -6241,7 +6267,7 @@ function _htmlPartie2Aides(f, isPaid) {
 
   var html = '<div style="border:2px solid ' + (isPaid?'#52b788':'#e8c84a') + ';border-radius:10px;overflow:hidden;margin-top:14px">';
   html += '<div style="background:' + (isPaid?'#2d6a4f':'#856404') + ';padding:10px 14px;display:flex;align-items:center">';
-  html += '<span style="color:white;font-weight:bold;font-size:14px">&#x1F3AB; Aides / Pass / Avoirs</span>' + verif + '</div>';
+  html += '<span style="color:white;font-weight:bold;font-size:14px">🎫 Aides / Pass / Avoirs</span>' + verif + '</div>';
   html += '<table style="width:100%;border-collapse:collapse;font-size:13px">';
 
   function ligneAide(label, montant, couleur, note) {
@@ -6262,7 +6288,7 @@ function _htmlPartie2Aides(f, isPaid) {
     + '<td style="padding:10px 14px;font-weight:bold;font-size:14px;color:#1a2e22">Total déductions</td>'
     + '<td style="padding:10px 14px;text-align:right;font-weight:bold;color:#1a2e22">− ' + f.totalDeductions.toFixed(2) + ' €</td></tr>';
   html += '<tr style="background:' + (isPaid?'#1a2e22':'#fff3cd') + '">'
-    + '<td style="padding:10px 14px;font-weight:bold;font-size:15px;color:' + (isPaid?'white':'#856404') + '">&#x1F4B0; Solde à régler</td>'
+    + '<td style="padding:10px 14px;font-weight:bold;font-size:15px;color:' + (isPaid?'white':'#856404') + '">💰 Solde à régler</td>'
     + '<td style="padding:10px 14px;text-align:right;font-weight:bold;font-size:18px;color:' + (isPaid?'#52b788':'#856404') + '">' + f.solde.toFixed(2) + ' €</td></tr>';
   html += '</table></div>';
   return html;
@@ -6285,13 +6311,13 @@ function _htmlPartie3Paiement(f, rows, modeLabel, isPaid) {
 
   var html = '<div style="border:2px solid ' + borderMode + ';border-radius:10px;overflow:hidden;margin-top:14px">';
   html += '<div style="background:' + couleurMode + ';padding:10px 14px;display:flex;align-items:center;justify-content:space-between">';
-  html += '<span style="color:white;font-weight:bold;font-size:14px">&#x1F4B3; Mode de paiement</span>' + statut + '</div>';
+  html += '<span style="color:white;font-weight:bold;font-size:14px">💳 Mode de paiement</span>' + statut + '</div>';
   html += '<div style="padding:12px 14px">';
 
   // HelloAsso
   if (modePaiement === 'helloasso') {
     html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0">';
-    html += '<span style="font-size:22px">&#x1F4B3;</span>';
+    html += '<span style="font-size:22px">💳</span>';
     html += '<div><div style="font-weight:bold;color:#1a2e22">HelloAsso (paiement en ligne)</div>';
     html += '<div style="font-size:12px;color:#555">Paiement sécurisé en ligne</div></div>';
     html += '<div style="margin-left:auto;font-weight:bold;font-size:16px;color:#1a2e22">' + montantRegle.toFixed(2) + ' €</div>';
@@ -6300,7 +6326,7 @@ function _htmlPartie3Paiement(f, rows, modeLabel, isPaid) {
   // Chèque unique
   else if (modePaiement === 'cheque') {
     html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0">';
-    html += '<span style="font-size:22px">&#x1F4DD;</span>';
+    html += '<span style="font-size:22px">📝</span>';
     html += '<div style="flex:1"><div style="font-weight:bold;color:#1a2e22">Chèque à l\'ordre du FRI</div>';
     if (f.cheques.length > 0) {
       var ch = f.cheques[0];
@@ -6315,7 +6341,7 @@ function _htmlPartie3Paiement(f, rows, modeLabel, isPaid) {
   }
   // 3 chèques
   else if (modePaiement === 'cheque3') {
-    html += '<div style="font-weight:bold;color:#1a2e22;margin-bottom:8px">&#x1F4DD; Paiement en 3 chèques à l\'ordre du FRI</div>';
+    html += '<div style="font-weight:bold;color:#1a2e22;margin-bottom:8px">📝 Paiement en 3 chèques à l\'ordre du FRI</div>';
     var totalCheques = 0;
     (f.cheques.length>0 ? f.cheques : [{numero:1},{numero:2},{numero:3}]).forEach(function(ch, i) {
       var mt = parseFloat(ch.montant)||0;
@@ -6333,7 +6359,7 @@ function _htmlPartie3Paiement(f, rows, modeLabel, isPaid) {
   // Espèces
   else if (modePaiement === 'especes') {
     html += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0">';
-    html += '<span style="font-size:22px">&#x1F4B5;</span>';
+    html += '<span style="font-size:22px">💵</span>';
     html += '<div style="flex:1"><div style="font-weight:bold;color:#1a2e22">Règlement en espèces</div>';
     html += '<div style="font-size:12px;color:#555">À remettre en permanence (mardi 16h30–18h30)</div></div>';
     html += '<div style="margin-left:auto;font-weight:bold;font-size:16px;color:#1a2e22">' + montantRegle.toFixed(2) + ' €</div>';
@@ -6362,7 +6388,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
   var code   = r0.code_dossier||'';
   var f      = _calcFinancier(rows);
   if (!modeLabel) {
-    var mlMap={helloasso:'HelloAsso &#x1F4B3;',cheque:'Chèque &#x1F4DD;',cheque3:'Paiement 3 chèques &#x1F4DD;',especes:'Espèces &#x1F4B5;'};
+    var mlMap={helloasso:'HelloAsso 💳',cheque:'Chèque 📝',cheque3:'Paiement 3 chèques 📝',especes:'Espèces 💵'};
     modeLabel = mlMap[r0.mode_paiement||'helloasso'] || (r0.mode_paiement||'HelloAsso');
   }
 
@@ -6412,7 +6438,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
   var hasTTemail = rows.some(function(r){ var aid = String(r.activite_id||''); return aid.indexOf('PING') >= 0 || aid.indexOf('tt-') === 0; });
   var ffttBloc = hasTTemail
     ? '<div style="background:#e8eaf6;border:2px solid #1a237e;border-radius:8px;padding:14px 18px;margin:12px 0;">'
-      + '<strong style="color:#1a237e;font-size:14px;">&#x1F3D3; Tennis de Table — Documents obligatoires</strong>'
+      + '<strong style="color:#1a237e;font-size:14px;">🏓 Tennis de Table — Documents obligatoires</strong>'
       + '<p style="font-size:13px;color:#333;margin:8px 0;line-height:1.6;">Pour participer aux compétitions, vous devez également :</p>'
       + '<ul style="font-size:13px;color:#333;margin:0 0 10px;padding-left:18px;line-height:1.8;">'
       + '<li><strong>S’inscrire à la FFTT</strong> (Fédération Française de Tennis de Table) — obligatoire pour la compétition</li>'
@@ -6421,7 +6447,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
       + '</ul>'
       + '<a href="https://script.google.com/macros/s/AKfycbx-Y6io0i42BbjalFcG45--tq5-k9I-AU5kcQ7QHhI1zgh-X2baR3dU7TKWD1X8KQwI/exec"'
       + ' style="display:inline-block;background:#1a237e;color:white;border-radius:6px;padding:8px 16px;font-size:13px;font-weight:700;text-decoration:none;">'
-      + '&#x1F4CB; Remplir le PPS FFTT en ligne</a>'
+      + '📋 Remplir le PPS FFTT en ligne</a>'
       + '</div>'
     : '';
 
@@ -6430,7 +6456,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
     : '<div style="background:#fff8e1;padding:11px 20px;text-align:center;font-weight:bold;color:#856404;border-bottom:2px solid #e8c84a">⏳ En attente de règlement — '+modeLabel+' — '+f.totalActivites.toFixed(2)+' €</div>';
 
   var mentionFacture = (isPaid&&pdfBlob)
-    ? '<div style="background:#e8f4fd;border:1.5px solid #2980b9;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px">&#x1F4C4; <strong>Votre reçu de paiement est joint à cet email</strong> (fichier PDF).</div>' : '';
+    ? '<div style="background:#e8f4fd;border:1.5px solid #2980b9;border-radius:8px;padding:12px 16px;margin:12px 0;font-size:14px">📄 <strong>Votre reçu de paiement est joint à cet email</strong> (fichier PDF).</div>' : '';
 
   var paraIntro = isPaid
     ? '<p style="color:#333;line-height:1.7">Votre inscription pour la saison <strong>2026/2027</strong> est <strong>validée</strong>.</p>'
@@ -6443,7 +6469,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
     // En-tête
     + '<div style="background:#1a2e22;padding:20px 24px;text-align:center">'
     + '<img src="cid:logo_fri" alt="FRI" style="width:66px;height:auto;margin-bottom:10px;border-radius:8px;display:block;margin-left:auto;margin-right:auto">'
-    + '<h1 style="color:white;margin:0;font-size:20px">' + (isPaid?'&#x1F389; Inscription validée !':'&#x1F4CB; Demande d\'inscription enregistrée') + '</h1>'
+    + '<h1 style="color:white;margin:0;font-size:20px">' + (isPaid?'🎉 Inscription validée !':'📋 Demande d\'inscription enregistrée') + '</h1>'
     + '<p style="color:#52b788;margin:5px 0 0;font-size:13px">' + NOM_ASSO + ' — Saison 2026/2027</p></div>'
     + bandeau
     + '<div style="padding:22px 24px">'
@@ -6480,7 +6506,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
             + '<p style="color:white;font-weight:bold;font-size:14px;margin:0 0 4px">⚠️ Documents à apporter impérativement</p>'
             + '<p style="color:rgba(255,255,255,0.85);font-size:12px;margin:0">Sans ces documents, votre inscription ne pourra pas être finalisée.</p>'
             + '</div>'
-          : '<h3 style="color:#1a2e22;font-size:15px;margin:18px 0 6px;padding-bottom:4px;border-bottom:2px solid #d8f3dc">&#x1F4CB; Documents</h3>';
+          : '<h3 style="color:#1a2e22;font-size:15px;margin:18px 0 6px;padding-bottom:4px;border-bottom:2px solid #d8f3dc">📋 Documents</h3>';
         return titre + '<ul style="color:#555;line-height:2;margin-top:8px">' + sh + '</ul>';
       })(santeHtml) : '')
     + ffttBloc
@@ -6522,7 +6548,7 @@ function envoyerEmailAdmin(emailAdmin, rows, isPaid, modeLabel) {
   var certifReq    = rows.some(function(r){ return r.qs_sante==='Certificat requis'; });
   var f            = _calcFinancier(rows);
   if (!modeLabel) {
-    var mlMap2={helloasso:'HelloAsso &#x1F4B3;',cheque:'Chèque &#x1F4DD;',cheque3:'Paiement 3 chèques &#x1F4DD;',especes:'Espèces &#x1F4B5;'};
+    var mlMap2={helloasso:'HelloAsso 💳',cheque:'Chèque 📝',cheque3:'Paiement 3 chèques 📝',especes:'Espèces 💵'};
     modeLabel = mlMap2[r0.mode_paiement||'helloasso'] || (r0.mode_paiement||'HelloAsso');
   }
 
@@ -6831,7 +6857,7 @@ function envoyerEmailSuppressionActivite(params) {
   if (estRegle) {
     avoirHtml = avoir > 0
       ? '<div style="margin:16px 0;padding:12px 16px;background:#fff3e0;border-left:4px solid #e65100;border-radius:4px">'
-        + '&#x1F4B3; <strong>Avoir enregistré : ' + avoir.toFixed(2) + ' €</strong><br>'
+        + '💳 <strong>Avoir enregistré : ' + avoir.toFixed(2) + ' €</strong><br>'
         + '<small>Sera déduit de votre prochain règlement ou remboursé sur demande.</small></div>'
       : '<div style="margin:12px 0;padding:10px 14px;background:#f5f5f5;border-radius:4px">Aucun avoir à enregistrer.</div>';
   }
@@ -6882,9 +6908,9 @@ function envoyerEmailSuppressionActivite(params) {
     Object.keys(ffttDetail).forEach(function(m){ if(Number(ffttDetail[m])>0) adminLines.push('  • ' + m + ' — FFTT : ' + Number(ffttDetail[m]).toFixed(2) + ' €'); });
     envoyerEmail(EMAIL_ADMIN,
       '[FRI Admin] Suppression ' + (estRegle ? 'réglée' : 'non réglée') + ' — N°' + code + ' — ' + actNomClean,
-      '&#x1F5D1; ' + actNomClean + ' supprimée\nDossier : ' + code + (estRegle ? ' (RÉGLÉ)' : ' (non réglé)')
+      '🗑 ' + actNomClean + ' supprimée\nDossier : ' + code + (estRegle ? ' (RÉGLÉ)' : ' (non réglé)')
         + '\nDate : ' + dateJour
-        + (estRegle && avoir > 0 ? '\n&#x1F4B3; Avoir : ' + avoir.toFixed(2) + ' €' : '')
+        + (estRegle && avoir > 0 ? '\n💳 Avoir : ' + avoir.toFixed(2) + ' €' : '')
         + '\nRemise famille après : ' + (aRemiseApres ? 'OUI' : 'NON')
         + '\nDétail :\n' + (adminLines.join('\n') || '  (aucune activité restante)')
         + '\nTotal dossier : ' + totalApres.toFixed(2) + ' €',
@@ -9625,18 +9651,18 @@ function envoyerRappelManuelGAS(code) {
       + (dateInscription ? ' du <strong>' + dateInscription + '</strong>' : '')
       + ' est en attente de règlement.</p>'
       + (total > 0 ? '<div style="background:#fff8e1;border:1px solid #e8c84a;border-radius:10px;padding:16px;margin:16px 0;text-align:center">'
-        + '<div style="font-size:13px;color:#856404;font-weight:700;margin-bottom:4px">&#x1F4B0; Montant à régler</div>'
+        + '<div style="font-size:13px;color:#856404;font-weight:700;margin-bottom:4px">💰 Montant à régler</div>'
         + '<div style="font-size:24px;font-weight:900;color:#1a2e22;">' + total.toFixed(2) + ' €</div>'
         + '<div style="font-size:12px;color:#888;margin-top:4px">(activités + adhésion FNSMR)</div>'
         + '</div>' : '')
       + '<p style="color:#555;line-height:1.7"><strong>Comment régler ?</strong></p>'
       + '<ul style="color:#555;line-height:2;padding-left:20px">'
-      + '<li>&#x1F4B3; <strong>En ligne</strong> via HelloAsso (lien ci-dessous)</li>'
-      + '<li>&#x1F4C5; <strong>Aux permanences</strong> : Mardi 16h30 – 18h30</li>'
+      + '<li>💳 <strong>En ligne</strong> via HelloAsso (lien ci-dessous)</li>'
+      + '<li>📅 <strong>Aux permanences</strong> : Mardi 16h30 – 18h30</li>'
       + '<li>✉️ <strong>Par courrier</strong> : Chèque à l\'ordre du Foyer Rural d\'Isneauville</li>'
       + '</ul>'
       + helloassoBoutonHtml(null, total > 0 ? total.toFixed(2) + ' €' : null)
-      + (pdfBlob ? '<p style="color:#555;font-size:13px;margin-top:16px">&#x1F4CE; <em>Votre facture détaillée est jointe à cet email.</em></p>' : '')
+      + (pdfBlob ? '<p style="color:#555;font-size:13px;margin-top:16px">📎 <em>Votre facture détaillée est jointe à cet email.</em></p>' : '')
       + '<p style="color:#888;font-size:12px;margin-top:16px">⚠️ <em>Sans règlement, votre inscription ne pourra pas être confirmée.</em></p>'
       + '<hr style="border:none;border-top:1px solid #eee;margin:20px 0">'
       + '<p style="color:#888;font-size:12px">Foyer Rural d\'Isneauville — '
@@ -9672,7 +9698,7 @@ function envoyerRappelManuelGAS(code) {
 
 function verifierFinDeSaison(){var props=PropertiesService.getScriptProperties();var now=new Date();var today=Utilities.formatDate(now,'Europe/Paris','yyyy-MM-dd');var dateCible=props.getProperty('FDS_DATE_SUPPRESSION')||(now.getFullYear()+'-06-01');var statut=props.getProperty('FDS_STATUT')||'attente';if(statut==='annulee'){return;}var dateSuppression=new Date(dateCible+'T02:00:00');var dateAvertissement=new Date(dateSuppression);dateAvertissement.setDate(dateAvertissement.getDate()-7);var todayAvert=Utilities.formatDate(dateAvertissement,'Europe/Paris','yyyy-MM-dd');var avertOk=props.getProperty('FDS_AVERTISSEMENT_OK')==='true';if(today===todayAvert&&!avertOk){envoyerAvertissementSuppression(dateCible);props.setProperty('FDS_AVERTISSEMENT_OK','true');return;}if(today===dateCible&&(statut==='confirmee'||statut==='attente')){remiseAZeroComplete();props.deleteProperty('FDS_STATUT');props.deleteProperty('FDS_AVERTISSEMENT_OK');props.setProperty('FDS_DATE_SUPPRESSION',(now.getFullYear()+1)+'-06-01');}}
 function envoyerAvertissementSuppression(dateCible){var scriptId=ScriptApp.getScriptId();var baseUrl=ScriptApp.getService().getUrl();var tokenConfirm=Utilities.base64Encode('confirmer:'+dateCible+':'+scriptId.substring(0,8));var tokenAnnuler=Utilities.base64Encode('annuler:'+dateCible+':'+scriptId.substring(0,8));var tokenReporter=Utilities.base64Encode('reporter30:'+dateCible+':'+scriptId.substring(0,8));PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_CONFIRM',tokenConfirm);PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_ANNULER',tokenAnnuler);PropertiesService.getScriptProperties().setProperty('FDS_TOKEN_REPORTER',tokenReporter);var urlConfirm=baseUrl+'?action=fds&token='+encodeURIComponent(tokenConfirm);var urlAnnuler=baseUrl+'?action=fds&token='+encodeURIComponent(tokenAnnuler);var urlReporter=baseUrl+'?action=fds&token='+encodeURIComponent(tokenReporter);envoyerEmail(EMAIL_ADMIN,'[FRI] Suppression donnees prevue le '+dateCible,'Confirmer : '+urlConfirm+'\nReporter 30j : '+urlReporter+'\nAnnuler : '+urlAnnuler,{name:NOM_ASSO});}
-function traiterActionFinDeSaison(token){var props=PropertiesService.getScriptProperties();var tokenConfirm=props.getProperty('FDS_TOKEN_CONFIRM')||'',tokenAnnuler=props.getProperty('FDS_TOKEN_ANNULER')||'',tokenReporter=props.getProperty('FDS_TOKEN_REPORTER')||'';var message='';if(token===tokenConfirm){props.setProperty('FDS_STATUT','confirmee');message='✅ Suppression confirmée.';}else if(token===tokenAnnuler){props.setProperty('FDS_STATUT','annulee');message='&#x1F6AB; Suppression annulée.';}else if(token===tokenReporter){var dateCible=props.getProperty('FDS_DATE_SUPPRESSION')||'';var nouvelleDate=new Date(dateCible+'T00:00:00');nouvelleDate.setDate(nouvelleDate.getDate()+30);var nouvelleDateStr=Utilities.formatDate(nouvelleDate,'Europe/Paris','yyyy-MM-dd');props.setProperty('FDS_DATE_SUPPRESSION',nouvelleDateStr);props.setProperty('FDS_STATUT','attente');props.deleteProperty('FDS_AVERTISSEMENT_OK');message='&#x1F4C5; Suppression reportée au '+nouvelleDateStr+'.';}else{message='❌ Lien invalide ou expiré.';}return HtmlService.createHtmlOutput('<html><head><meta charset="UTF-8"></head><body style="font-family:Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f2"><div style="background:white;border-radius:14px;padding:40px;max-width:480px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.1)"><div style="font-size:48px;margin-bottom:16px">&#x1F3E1;</div><h2>Foyer Rural d\'Isneauville</h2><p>'+message+'</p></div></body></html>');}
+function traiterActionFinDeSaison(token){var props=PropertiesService.getScriptProperties();var tokenConfirm=props.getProperty('FDS_TOKEN_CONFIRM')||'',tokenAnnuler=props.getProperty('FDS_TOKEN_ANNULER')||'',tokenReporter=props.getProperty('FDS_TOKEN_REPORTER')||'';var message='';if(token===tokenConfirm){props.setProperty('FDS_STATUT','confirmee');message='✅ Suppression confirmée.';}else if(token===tokenAnnuler){props.setProperty('FDS_STATUT','annulee');message='🚫 Suppression annulée.';}else if(token===tokenReporter){var dateCible=props.getProperty('FDS_DATE_SUPPRESSION')||'';var nouvelleDate=new Date(dateCible+'T00:00:00');nouvelleDate.setDate(nouvelleDate.getDate()+30);var nouvelleDateStr=Utilities.formatDate(nouvelleDate,'Europe/Paris','yyyy-MM-dd');props.setProperty('FDS_DATE_SUPPRESSION',nouvelleDateStr);props.setProperty('FDS_STATUT','attente');props.deleteProperty('FDS_AVERTISSEMENT_OK');message='📅 Suppression reportée au '+nouvelleDateStr+'.';}else{message='❌ Lien invalide ou expiré.';}return HtmlService.createHtmlOutput('<html><head><meta charset="UTF-8"></head><body style="font-family:Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f0f4f2"><div style="background:white;border-radius:14px;padding:40px;max-width:480px;text-align:center;box-shadow:0 10px 40px rgba(0,0,0,0.1)"><div style="font-size:48px;margin-bottom:16px">🏡</div><h2>Foyer Rural d\'Isneauville</h2><p>'+message+'</p></div></body></html>');}
 function installerDeclencheurFinDeSaison(){ScriptApp.getProjectTriggers().forEach(function(t){if(t.getHandlerFunction()==='verifierFinDeSaison')ScriptApp.deleteTrigger(t);});ScriptApp.newTrigger('verifierFinDeSaison').timeBased().everyDays(1).atHour(2).create();var props=PropertiesService.getScriptProperties();if(!props.getProperty('FDS_DATE_SUPPRESSION'))props.setProperty('FDS_DATE_SUPPRESSION',new Date().getFullYear()+'-06-01');Logger.log('✅ Déclencheur fin de saison installé');}
 function modifierDateSuppression(nouvelleDateStr){var props=PropertiesService.getScriptProperties();props.setProperty('FDS_DATE_SUPPRESSION',nouvelleDateStr);props.setProperty('FDS_STATUT','attente');props.deleteProperty('FDS_AVERTISSEMENT_OK');envoyerEmail(EMAIL_ADMIN,'[FRI] Date de suppression modifiee','Nouvelle date : '+nouvelleDateStr,{name:NOM_ASSO});}
 

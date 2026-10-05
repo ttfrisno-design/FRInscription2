@@ -2289,8 +2289,8 @@ function traiterRequete(e) {
             activite:String(r[22]||''), jour:String(r[23]||''), heure:String(r[24]||''),
             lieu:String(r[25]||''), tarif_brut:Number(r[27]||0), tarif_net:Number(r[29]||0),
             statut_inscription:String(r[39]||''), mode_paiement:String(r[32]||'helloasso'),
-            membre_nom:String(r[3]||''), membre_prenom:String(r[4]||''), ddn:String(r[5]||''),
-            date:String(r[20]||''), qs_sante:String(r[34]||''),
+            membre_nom:String(r[3]||''), membre_prenom:String(r[4]||''), ddn:formaterDdn(r[5]),
+            date:formaterDateHeure(r[20]), qs_sante:String(r[34]||''),
             fftt_price:Number(r[36]||0), total_famille:Number(r[30]||0),
             commune:String(r[11]||'').toLowerCase().indexOf('isneauville')>=0?'isno':'hc'
           };
@@ -2355,10 +2355,10 @@ function traiterRequete(e) {
             mode_paiement:     String(r[32]||'helloasso'),
             membre_nom:        String(r[3]||''),
             membre_prenom:     String(r[4]||''),
-            ddn:               String(r[5]||''),
+            ddn:               formaterDdn(r[5]),
             sexe:              String(r[6]||''),
             animateur:         String(r[26]||''),
-            date:              String(r[20]||''),
+            date:              formaterDateHeure(r[20]),
             qs_sante:          String(r[34]||''),   // col AI index 34
             pass_aide:         String(r[35]||''),   // col AJ index 35
             fftt_price:        Number(r[36]||0),    // col AK index 36
@@ -2837,6 +2837,55 @@ function estEligibleRemise(pid, commune) {
 
 function communeFromVille(ville) {
   return String(ville||'').toLowerCase().indexOf('isneauville') >= 0 ? 'Isneauville' : 'Hors commune';
+}
+
+// ── Dates : une cellule Date lue dans la feuille, passée à String(), donne
+//    « Sun Mar 02 1969 00:00:00 GMT+0100 (heure normale d'Europe centrale) ».
+//    Ces helpers renvoient toujours un texte lisible.
+// Date de naissance → 'yyyy-MM-dd' (format utilisé par le formulaire et la feuille)
+function formaterDdn(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (v instanceof Date) return isNaN(v.getTime()) ? '' : Utilities.formatDate(v, 'Europe/Paris', 'yyyy-MM-dd');
+  var t = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  var m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+  var d = new Date(t);                       // ex. « Sun Mar 02 1969 00:00:00 GMT+0100 »
+  return isNaN(d.getTime()) ? t : Utilities.formatDate(d, 'Europe/Paris', 'yyyy-MM-dd');
+}
+// Date (et heure si présente) → 'dd/MM/yyyy' ou 'dd/MM/yyyy à HH:mm'
+function formaterDateHeure(v) {
+  if (v === null || v === undefined || v === '') return '';
+  var d = v instanceof Date ? v : null;
+  if (!d) {
+    var t = String(v).trim();
+    if (!/GMT|UTC|^\w{3} \w{3} \d/.test(t)) return t; // déjà lisible (ex. « 05/10/2026 à 10:12 »)
+    d = new Date(t);
+    if (isNaN(d.getTime())) return t;
+  }
+  if (isNaN(d.getTime())) return '';
+  var heure = Utilities.formatDate(d, 'Europe/Paris', 'HH:mm');
+  return Utilities.formatDate(d, 'Europe/Paris', 'dd/MM/yyyy') + (heure !== '00:00' ? ' à ' + heure : '');
+}
+
+// Outil de réparation (à exécuter une fois depuis l'éditeur) : remet au bon format les dates de
+// naissance écrites en texte brut (« Sun Mar 02 1969… ») dans Inscriptions (col E) et les onglets d'activité (col F).
+function corrigerDatesNaissance() {
+  var ss = SpreadsheetApp.openById(SHEET_ID), nb = 0;
+  var corriger = function(sh, col) {
+    if (!sh || sh.getLastRow() < 2) return;
+    var rg = sh.getRange(2, col, sh.getLastRow() - 1, 1), vals = rg.getValues(), modif = false;
+    vals.forEach(function(r) {
+      if (typeof r[0] === 'string' && /GMT|UTC/.test(r[0])) { r[0] = formaterDdn(r[0]); modif = true; nb++; }
+    });
+    if (modif) rg.setValues(vals);
+  };
+  corriger(ss.getSheetByName(SHEET_INSCRIPTIONS), 5);
+  ss.getSheets().forEach(function(sh) {
+    var entete = String(sh.getRange(1, 6).getValue() || '') + String(sh.getRange(2, 6).getValue() || '');
+    if (sh.getName() !== SHEET_INSCRIPTIONS && /naiss|ddn/i.test(entete)) corriger(sh, 6);
+  });
+  Logger.log('✅ ' + nb + ' date(s) de naissance corrigée(s)');
 }
 
 // Retire les caractères < et > des textes saisis dans le formulaire public :
@@ -3642,9 +3691,9 @@ function getDossiersSheet() {
     var respParts = respFull.split(' ');
 
     dossiers.push({
-      code: code, date: String(row[20]||''), statut: String(row[21]||''),
+      code: code, date: formaterDateHeure(row[20]), statut: String(row[21]||''),
       nom_membre: String(row[2]||''), prenom_membre: String(row[3]||''),
-      ddn: String(row[4]||''), sexe: String(row[36]||''),
+      ddn: formaterDdn(row[4]), sexe: String(row[36]||''),
       adresse: String(row[7]||''), cp: String(row[9]||''), ville: String(row[10]||''),
       tel: String(row[14]||''), email: String(row[15]||''),
       tel2: String(row[17]||''), email2: String(row[18]||''),
@@ -4247,7 +4296,7 @@ function ajouterActiviteDossierSheet(payload) {
   var placesId      = payload.placesId      || getPlacesId(actId);
   var membreNom     = payload.membreNom     || '';
   var membrePrenom  = payload.membrePrenom  || '';
-  var membreDdn     = payload.membreDdn     || '';
+  var membreDdn     = formaterDdn(payload.membreDdn || '');
   var membreSexe    = payload.membreSexe    || '';
   var jour          = payload.jour          || '';
   var heure         = payload.heure         || '';
@@ -9389,7 +9438,7 @@ function envoyerRappelManuelGAS(code) {
       fnsmr:              15,
       remise:             Number(row[28]||0),
       note_tarif:         '',
-      date:               String(row[20]||'')
+      date:               formaterDateHeure(row[20])
     });
   });
 

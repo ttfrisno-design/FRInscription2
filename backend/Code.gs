@@ -157,10 +157,13 @@ function genererFacturePDF(rows, modeLabel, titreOverride) {
       var isWaitPdf = String(r.statut_inscription||'').toLowerCase().indexOf('attente') >= 0;
       if (!isWaitPdf && !seenPids[pid]) { seenPids[pid] = true; if (estEligibleRemise(pid)) nbEligibles++; }
     });
+    nbEligibles += Number((rows[0] && rows[0].nb_elig_existants) || 0);
     var aRemise15 = nbEligibles >= 3;
 
-    // Membres uniques → FNSMR
-    var nbMembres = Object.keys(parMembre).length;
+    // Membres uniques → FNSMR (sauf adhésion déjà réglée : ajout d'activités à un dossier existant)
+    var nbMembres = Object.keys(parMembre).filter(function(k) {
+      return (parMembre[k] || []).some(function(r) { return !(r && r.adhesion_deja_reglee); });
+    }).length;
     var totalFnsmr = nbMembres * 15;
 
     // FFTT par membre (dédupliqué)
@@ -2179,6 +2182,10 @@ function traiterRequete(e) {
       }
     }
 
+    // ── « Créer un compte » : la famille a-t-elle déjà un dossier cette saison ? ──
+    if(payload.action==='chercherDossierFamille'){
+      return repondreAvecCb(chercherDossierFamilleGAS(payload.email, payload.nom),null,null,callback);
+    }
     // ── Espace famille (menu d'accueil) : consulter son dossier ──
     if(payload.action==='consulterDossier'){
       var resCD = lireDossierFamille(payload.code, payload.email);
@@ -2934,6 +2941,42 @@ function _emailValide(e) { return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(String
 
 function _texteCourt(v, max) { return String(nettoyerTexteSaisi(v == null ? '' : String(v))).trim().substring(0, max); }
 
+// Recherche d'un dossier existant (même email ET même nom de famille) pour basculer
+// l'inscription en ajout d'activités. Ne renvoie que ce qui sert à pré-remplir les membres.
+function chercherDossierFamilleGAS(emailBrut, nomBrut) {
+  var email = String(emailBrut || '').trim().toLowerCase();
+  var norm = function(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z]/g, ''); };
+  var nom = norm(nomBrut);
+  if (!_emailValide(email) || nom.length < 2) return {status:'ok', trouve:false};
+  if (_compteurDepasse('cdf_' + email, 30, 3600)) return {status:'ok', trouve:false};
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+  if (!sh || sh.getLastRow() < 2) return {status:'ok', trouve:false};
+  var nbCol = Math.min(Math.max(sh.getLastColumn(), 40), 45);
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, nbCol).getValues();
+  var code = '';
+  for (var i = data.length - 1; i >= 0 && !code; i--) {      // dossier le plus récent d'abord
+    var r = data[i];
+    var em = [String(r[15] || '').trim().toLowerCase(), String(r[18] || '').trim().toLowerCase()];
+    if (em.indexOf(email) < 0) continue;
+    if (lireStatutInscription(r).toLowerCase().indexOf('supprim') >= 0) continue;
+    var resp = norm(lireResponsable(r) || r[36]);
+    if (norm(r[2]) === nom || (resp && resp.indexOf(nom) >= 0)) code = String(r[19] || '').trim();
+  }
+  if (!/^FRI-[A-Z0-9]{4}$/.test(code)) return {status:'ok', trouve:false};
+  var membres = {}, ordre = [];
+  data.forEach(function(r) {
+    if (String(r[19] || '').trim() !== code) return;
+    if (lireStatutInscription(r).toLowerCase().indexOf('supprim') >= 0) return;
+    var k = norm(r[3]) + '|' + norm(r[2]);
+    if (membres[k]) return;
+    membres[k] = { prenom: String(r[3] || '').trim(), nom: String(r[2] || '').trim(), ddn: formaterDdn(r[4]), sexe: lireSexe(r) };
+    ordre.push(k);
+  });
+  var nbElig = 0;
+  try { nbElig = lireLignesRestantes(SpreadsheetApp.openById(SHEET_ID), code, null).nbEligibles || 0; } catch(e) {}
+  return {status:'ok', trouve:true, code:code, membres: ordre.map(function(k) { return membres[k]; }), nbActivitesEligibles: nbElig};
+}
+
 // Lit le dossier d'une famille. Renvoie {status:'ok', dossier} ou {status:'error', message}.
 function lireDossierFamille(codeBrut, emailBrut) {
   var code  = String(codeBrut || '').trim().toUpperCase();
@@ -3139,6 +3182,13 @@ function addRegistration(rows, paymentStatus, payload) {
   // ── Protection anti-doublon : vérifier si le code_dossier existe déjà ──
   // Peut arriver si confirmPayment() appelle sendToGoogleSheets une 2e fois
   var codeDossier = rows[0].code_dossier || '';
+  var ajoutDossier = !!(payload && payload.ajoutDossier);
+  // Envoi déjà traité (nouvel essai après une coupure réseau) → ne pas écrire deux fois
+  var idEnvoi = payload && payload.idEnvoi ? 'envoi_' + String(payload.idEnvoi).replace(/[^\w-]/g, '').substring(0, 60) : '';
+  if (idEnvoi) {
+    try { if (CacheService.getScriptCache().get(idEnvoi)) return { inserted: 0, doublon: true }; } catch(eC) {}
+  }
+  var membresDejaDansDossier = {};
   // Anti-doublon : ignorer les codes de test et vérifier seulement les vrais codes FRI-XXXX
   if (codeDossier && /^FRI-[A-Z0-9]{4}$/.test(codeDossier) && codeDossier !== 'FRI-TEST') {
     try {
@@ -3154,12 +3204,25 @@ function addRegistration(rows, paymentStatus, payload) {
               Logger.log('⚠️ addRegistration — code ' + codeDossier + ' déjà pris par une autre famille');
               return { inserted: 0, codePris: true, error: 'Numéro de dossier déjà utilisé' };
             }
+            if (ajoutDossier) break; // ajout d'activités à un dossier existant de la même famille
             Logger.log('⚠️ addRegistration — doublon détecté pour ' + codeDossier + ' → insertion ignorée');
             return { inserted: 0, doublon: true };
           }
         }
       }
     } catch(eCheck) { Logger.log('Vérif doublon KO (non bloquant) : ' + eCheck); }
+    // Ajout à un dossier existant : membres déjà présents (leur adhésion FNSMR est déjà comptée)
+    if (ajoutDossier) {
+      try {
+        var shM = ss.getSheetByName(SHEET_INSCRIPTIONS);
+        if (shM && shM.getLastRow() > 1) {
+          shM.getRange(2, 1, shM.getLastRow() - 1, 20).getValues().forEach(function(rm) {
+            if (String(rm[19] || '').trim() !== codeDossier) return;
+            membresDejaDansDossier[(String(rm[3] || '') + ' ' + String(rm[2] || '')).trim().toUpperCase()] = true;
+          });
+        }
+      } catch(eM) { Logger.log('Lecture membres existants KO : ' + eM); }
+    }
   }
 
   var modePaiement=rows[0].mode_paiement||'helloasso';
@@ -3226,6 +3289,8 @@ function addRegistration(rows, paymentStatus, payload) {
         : estEligRemise(getPlacesId(r.activite_id||'')) ? 1 : 0,
       /* 30 AD */ 0,
       /* 31 AE */ (function(){
+        // Ajout à un dossier existant : adhésion déjà réglée pour ce membre
+        if (membresDejaDansDossier[((r.membre_prenom||'') + ' ' + (r.membre_nom||'')).trim().toUpperCase()]) return 0;
         // FNSMR : 15€ SAUF si activité en attente ET le membre a d'autres lignes payantes
         var stInscrit = String(r.statut_inscription||'');
         if (stInscrit.toLowerCase().indexOf('attente') < 0) return 15; // payante → FNSMR dû
@@ -3420,6 +3485,7 @@ function addRegistration(rows, paymentStatus, payload) {
 
   invaliderCachePlaces(); // Invalider le cache places après inscription
   Logger.log("addReg step7: TERMINÉ — inserted:"+newRows.length);
+  if (idEnvoi && newRows.length) { try { CacheService.getScriptCache().put(idEnvoi, '1', 21600); } catch(eC2) {} }
   return{inserted:newRows.length};
   } finally {
     lock.releaseLock();
@@ -5953,8 +6019,13 @@ function _calcFinancier(rows) {
     if (ffttP>0 && !ffttMembres[k]) ffttMembres[k] = ffttP;
   });
 
-  var nbMembres  = Object.keys(parMembre).length;
+  // Adhésion déjà réglée (ajout d'activités à un dossier existant) : pas de nouvelle FNSMR
+  var nbMembres  = Object.keys(parMembre).filter(function(k) {
+    return parMembre[k].some(function(r) { return !r.adhesion_deja_reglee; });
+  }).length;
   var totalFnsmr = nbMembres * 15;
+  // Activités éligibles déjà présentes dans le dossier : comptent pour la remise famille
+  nbElig += Number((rows[0] && rows[0].nb_elig_existants) || 0);
   var totalFFTT  = Object.keys(ffttMembres).reduce(function(s,k){ return s+ffttMembres[k]; }, 0);
   var aRemise    = nbElig >= 3;
   Logger.log('_calcFinancier: ville=['+_ville0+'] commune=['+commune_calc+'] nbElig='+nbElig+' aRemise='+aRemise

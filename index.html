@@ -1897,6 +1897,7 @@ function goStep(n) {
     // Étape 1 → 2 : déléguer à validateStep1()
     if (cur === 1 && n > 1) {
       if (typeof validateStep1 === 'function' && !validateStep1()) return;
+      if (state._verifDossierCle !== cleVerifDossier()) { verifierDossierExistant(); return; }
     }
     // Étape 2 → 3 : au moins un membre avec une activité
     if (cur === 2 && n > 2) {
@@ -2007,6 +2008,7 @@ function btnNextStep3() {
 
 function nextStep(from) {
   if (from === 1 && !validateStep1()) return;
+  if (from === 1 && state._verifDossierCle !== cleVerifDossier()) { verifierDossierExistant(); return; }
   if (from === 2 && !validateStep2()) return;
   goStep(from + 1);
 }
@@ -2014,6 +2016,71 @@ function nextStep(from) {
 // ============================================================
 // VALIDATION
 // ============================================================
+function cleVerifDossier() {
+  return ((document.getElementById('rl-email1')?.value || '') + '|' + (document.getElementById('rl-nom')?.value || '')).trim().toLowerCase();
+}
+
+// « Créer un compte » : la famille a-t-elle déjà un dossier cette saison ?
+// Si oui, on propose d'y ajouter les nouvelles activités (adhésion déjà réglée non redemandée).
+async function verifierDossierExistant() {
+  const email = (document.getElementById('rl-email1')?.value || '').trim();
+  const nom = (document.getElementById('rl-nom')?.value || '').trim();
+  const btn = document.querySelector('#section-1 .btn-primary');
+  const texteBtn = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Vérification…'; }
+  let rep = null;
+  try {
+    if (getAppsScriptUrl()) {
+      const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'chercherDossierFamille', email: email, nom: nom });
+      rep = r && r.data ? nettoyerTexteRecu(r.data) : null;
+    }
+  } catch(e) { console.warn('[FRI] recherche dossier existant KO :', e); }
+  if (btn) { btn.disabled = false; btn.textContent = texteBtn; }
+  state._verifDossierCle = cleVerifDossier();   // refaite si l'email ou le nom change
+  if (!rep || !rep.trouve) { state.dossierExistant = null; dossiersExistantsActCount = 0; goStep(2); return; }
+  afficherModalDossierExistant(rep);
+}
+
+function afficherModalDossierExistant(d) {
+  document.getElementById('modal-dossier-existant')?.remove();
+  const noms = (d.membres || []).map(m => escHtml((m.prenom + ' ' + m.nom).trim())).join(', ');
+  const modal = document.createElement('div');
+  modal.id = 'modal-dossier-existant';
+  modal.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;padding:20px;';
+  modal.innerHTML = '<div role="dialog" aria-modal="true" style="background:white;border-radius:14px;max-width:480px;width:100%;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.4)">'
+    + '<div style="font-size:32px;text-align:center">📂</div>'
+    + '<h3 style="text-align:center;color:#1a2e22;margin:6px 0 12px">Vous avez déjà un dossier cette saison</h3>'
+    + '<p style="font-size:14px;line-height:1.6;color:#444;margin:0 0 10px">Dossier <strong>' + escHtml(d.code) + '</strong> — membres inscrits : <strong>' + noms + '</strong>.</p>'
+    + '<p style="font-size:14px;line-height:1.6;color:#444;margin:0 0 16px">Les activités que vous allez choisir seront <strong>ajoutées à ce dossier</strong>. '
+    + 'L\'adhésion de 15 € déjà réglée pour ces membres ne vous sera pas demandée ; un nouveau membre paiera l\'adhésion de 15 €.</p>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap">'
+    + '<button type="button" id="dex-non" class="btn btn-secondary" style="flex:1;justify-content:center">Créer un nouveau dossier</button>'
+    + '<button type="button" id="dex-oui" class="btn btn-primary" style="flex:2;justify-content:center">➕ Ajouter à mon dossier</button>'
+    + '</div></div>';
+  document.body.appendChild(modal);
+  document.getElementById('dex-non').onclick = () => { modal.remove(); state.dossierExistant = null; dossiersExistantsActCount = 0; goStep(2); };
+  document.getElementById('dex-oui').onclick = () => { modal.remove(); activerAjoutDossierExistant(d); };
+  setTimeout(() => document.getElementById('dex-oui')?.focus(), 50);
+}
+
+function activerAjoutDossierExistant(d) {
+  state.dossierExistant = { code: d.code, membres: d.membres || [], nbActivitesEligibles: d.nbActivitesEligibles || 0 };
+  dossiersExistantsActCount = d.nbActivitesEligibles || 0;   // compte pour la remise famille 15 %
+  try { localStorage.setItem('fri_code_session', d.code); } catch(e) {}  // même numéro de dossier
+  // Pré-remplir les membres déjà inscrits (ils pourront choisir de nouvelles activités)
+  const existants = (d.membres || []).map((x, i) => ({
+    id: i, nom: (x.nom || '').toUpperCase(), prenom: x.prenom || '', ddn: x.ddn || '',
+    sexe: (x.sexe === 'F' || x.sexe === 'M') ? x.sexe : '',
+    email: '', activities: [], waitingList: [], qs: {}, qsResult: null, ffttWant: false, ffttPrice: 0, certifMedEnvoye: false
+  }));
+  if (existants.length) {
+    state.members = existants;
+    memberCount = existants.length;
+  }
+  goStep(2);
+  showToast('📂 Ajout au dossier ' + d.code + ' : choisissez les nouvelles activités (ajoutez un membre si besoin).', 'green', 7000);
+}
+
 // Amène l'utilisateur sur le champ en erreur (sinon, sur mobile, il ne voit que le message)
 function allerAuChamp(el) {
   if (!el) return;
@@ -3803,7 +3870,7 @@ function updateMemberTotal(memberId) {
   });
   const el = document.getElementById(`member-total-${memberId}`);
   if (el) {
-    let txt = `Sous-total ${m.prenom || 'ce membre'} : ${total.toFixed(2)} € + adhésion FNSMR 15€`;
+    let txt = `Sous-total ${m.prenom || 'ce membre'} : ${total.toFixed(2)} €` + (membreDejaAdherent(m) ? ' (adhésion FNSMR déjà réglée)' : ' + adhésion FNSMR 15€');
     if (ttReduction > 0) txt += ` (réduction féminine TT : -${ttReduction}€ incluse)`;
     if (waitingCount > 0) txt += ` + ${waitingCount} activité(s) en liste d'attente (non facturée(s))`;
     el.textContent = txt;
@@ -4129,6 +4196,15 @@ function checkHealthContinuerBtn() {
 let activitesExistantes = []; // [{actId, tarif}]
 let dossiersExistantsActCount = 0; // nb activités éligibles déjà comptées
 
+// ── Dossier existant de la saison (inscription transformée en ajout d'activités) ──
+// state.dossierExistant = { code, membres:[{prenom, nom, ddn, sexe}], nbActivitesEligibles }
+function _normNom(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z]/g, ''); }
+function membreDejaAdherent(m) {
+  const d = state.dossierExistant;
+  if (!d || !m) return false;
+  return (d.membres || []).some(x => _normNom(x.prenom) === _normNom(m.prenom) && _normNom(x.nom) === _normNom(m.nom));
+}
+
 function toggleDossierExistant() {
   const panel = document.getElementById('dossier-existant-panel');
   const toggle = document.getElementById('dossier-existant-toggle');
@@ -4328,7 +4404,8 @@ function calcTotals() {
   let totalBeforeDiscount = 0;
   let discountableTotal = 0;
   let totalActivities = 0;
-  let totalFNSMR = state.members.length * 15;
+  // Adhésion FNSMR : 15 € par membre, sauf adhésion déjà réglée (dossier existant de la saison)
+  let totalFNSMR = state.members.filter(m => !membreDejaAdherent(m)).length * 15;
 
   const NON_DISCOUNTABLE = ['marche-nordic','country-init-j'];
   const allMemberActivities = state.members.flatMap(m => m.activities);
@@ -4460,7 +4537,11 @@ function buildRows(reg) {
           statut_inscription: _isWaiting ? 'Liste attente' : '',
           note_tarif: (cFl.forfait && ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'].includes(actId))
             ? (cFl.ids[0] === actId ? 'Forfait country ' + cFl.ids.length + ' séances' : 'Inclus forfait') : '',
+          adhesion_deja_reglee: membreDejaAdherent(m),
+          ajout_dossier: !!state.dossierExistant,
+          nb_elig_existants: state.dossierExistant ? (state.dossierExistant.nbActivitesEligibles || 0) : 0,
           fnsmr: (function(){
+            if (membreDejaAdherent(m)) return 0;   // adhésion déjà réglée (dossier existant)
             // FNSMR 0 si activité en attente ET le membre a d'autres activités payantes
             if (!_isWaiting) return 15;
             const autresPayantes = (m.activities||[]).filter(function(aid){
@@ -4536,7 +4617,11 @@ function buildRows(reg) {
         statut_inscription: _isWaiting2 ? 'Liste attente' : '',
         note_tarif: (cFl2.forfait && ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'].includes(actId))
           ? (cFl2.ids[0] === actId ? 'Forfait country ' + cFl2.ids.length + ' séances' : 'Inclus forfait') : '',
+        adhesion_deja_reglee: membreDejaAdherent(m),
+        ajout_dossier: !!state.dossierExistant,
+        nb_elig_existants: state.dossierExistant ? (state.dossierExistant.nbActivitesEligibles || 0) : 0,
         fnsmr: (function(){
+            if (membreDejaAdherent(m)) return 0;   // adhésion déjà réglée (dossier existant)
             if (!_isWaiting2) return 15;
             const autresPayantes2 = (m.activities||[]).filter(function(aid){
               return aid !== actId && !(_wl2||[]).includes(aid);
@@ -4676,7 +4761,7 @@ function renderSummary() {
           <tr><td>Sous-total activités</td><td style="text-align:right">${t.totalBeforeDiscount.toFixed(2)} €</td></tr>
           <tr><td>Remise 15% (${t.familyActCount} activités éligibles)</td><td style="text-align:right;color:var(--green)">- ${t.discount.toFixed(2)} €</td></tr>
           <tr><td>Total après remise</td><td style="text-align:right">${t.afterDiscount.toFixed(2)} €</td></tr>
-          <tr><td>Adhésion FNSMR (${state.members.length} personne${state.members.length>1?'s':''} × 15€)</td><td style="text-align:right">${t.fnsmr.toFixed(2)} €</td></tr>
+          <tr><td>Adhésion FNSMR (${t.fnsmr / 15} personne${t.fnsmr / 15 > 1 ? 's' : ''} × 15€)${state.dossierExistant ? ' — déjà réglée pour les membres inscrits au dossier ' + state.dossierExistant.code : ''}</td><td style="text-align:right">${t.fnsmr.toFixed(2)} €</td></tr>
           ${t.fftt > 0 ? `<tr><td style="color:#e65100;font-weight:600;">🏓 Licence(s) FFTT compétition</td><td style="text-align:right;color:#e65100;font-weight:600;">${t.fftt.toFixed(2)} €</td></tr>` : ''}
           <tr class="total-row"><td><strong>TOTAL À RÉGLER</strong></td><td style="text-align:right"><strong>${t.grandTotal.toFixed(2)} €</strong></td></tr>
         </tbody>
@@ -6486,6 +6571,8 @@ async function sendToGoogleSheets(reg) {
     // Vérifier la taille du payload
     const payloadObj = {
       action: 'addRegistration',
+      ajoutDossier: rows.some(r => r.ajout_dossier),
+      idEnvoi: String(reg.id || '') + '_' + (reg.code || ''),
       rows: rows,
       status: reg.status === 'pending_manual' ? 'pending' : 'paid',
       // Inclure les données des 3 chèques si applicable

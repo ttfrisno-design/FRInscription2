@@ -2106,6 +2106,20 @@ function traiterRequete(e) {
       }
     }
 
+    // ── Espace famille (menu d'accueil) : consulter son dossier ──
+    if(payload.action==='consulterDossier'){
+      var resCD = lireDossierFamille(payload.code, payload.email);
+      return repondreAvecCb(resCD,null,null,callback);
+    }
+    // ── Espace famille : demande de modification des activités (traitée par l'admin) ──
+    if(payload.action==='demanderModification'){
+      return repondreAvecCb(demanderModificationGAS(payload),null,null,callback);
+    }
+    // ── Espace famille : message libre au Foyer Rural ──
+    if(payload.action==='envoyerMessage'){
+      return repondreAvecCb(envoyerMessageContactGAS(payload),null,null,callback);
+    }
+
     // ── Activités d'un dossier existant (formulaire public « J'ai déjà un dossier ») ──
     // Remplace la lecture publique de la feuille (gviz) : seules les activités sont renvoyées.
     if(payload.action==='getActivitesDossier'){
@@ -2767,6 +2781,122 @@ function nettoyerTexteSaisi(v) {
     return o;
   }
   return v;
+}
+
+// ══════════════════════════════════════════════════════════════
+// ESPACE FAMILLE (menu d'accueil du site)
+// Actions publiques : la famille s'identifie avec son code dossier ET l'email
+// du dossier. Aucune donnée n'est modifiée : les demandes partent par email à l'admin.
+// ══════════════════════════════════════════════════════════════
+
+// Compteur simple (CacheService) pour limiter les abus d'une action publique
+function _compteurDepasse(clef, max, dureeSec) {
+  try {
+    var cache = CacheService.getScriptCache();
+    var n = parseInt(cache.get(clef) || '0', 10);
+    if (n >= max) return true;
+    cache.put(clef, String(n + 1), dureeSec);
+  } catch (e) {}
+  return false;
+}
+
+function _emailValide(e) { return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(String(e || '')); }
+
+function _texteCourt(v, max) { return String(nettoyerTexteSaisi(v == null ? '' : String(v))).trim().substring(0, max); }
+
+// Lit le dossier d'une famille. Renvoie {status:'ok', dossier} ou {status:'error', message}.
+function lireDossierFamille(codeBrut, emailBrut) {
+  var code  = String(codeBrut || '').trim().toUpperCase();
+  var email = String(emailBrut || '').trim().toLowerCase();
+  var refus = {status:'error', message:'Code dossier ou email incorrect.'};
+  if (!/^FRI-[A-Z0-9]{4}$/.test(code) || !_emailValide(email)) return refus;
+  // Au-delà de 10 essais ratés par heure sur un même code : on bloque (anti-devinette)
+  var clefEchecs = 'cd_echec_' + code;
+  try {
+    if (parseInt(CacheService.getScriptCache().get(clefEchecs) || '0', 10) >= 10)
+      return {status:'error', message:'Trop de tentatives, réessayez dans une heure.'};
+  } catch (e) {}
+
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+  if (!sh || sh.getLastRow() < 2) { _compteurDepasse(clefEchecs, 10, 3600); return refus; }
+  var nbCol = Math.min(Math.max(sh.getLastColumn(), 40), 45);
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, nbCol).getValues();
+  var lignes = data.filter(function(r) { return String(r[19] || '').trim() === code; });
+  var emailOk = lignes.some(function(r) {
+    return String(r[15] || '').trim().toLowerCase() === email || String(r[18] || '').trim().toLowerCase() === email;
+  });
+  if (!lignes.length || !emailOk) { _compteurDepasse(clefEchecs, 10, 3600); return refus; }
+
+  var membres = {}, ordre = [];
+  lignes.forEach(function(r) {
+    var statut = lireStatutInscription(r);
+    if (statut.toLowerCase().indexOf('supprim') >= 0) return;
+    var prenom = String(r[3] || '').trim(), nom = String(r[2] || '').trim();
+    var clef = (prenom + ' ' + nom).toUpperCase();
+    if (!membres[clef]) { membres[clef] = {prenom: prenom, nom: nom, activites: []}; ordre.push(clef); }
+    membres[clef].activites.push({
+      id:     lireActiviteId(r),
+      nom:    String(r[22] || '').trim(),
+      jour:   String(r[23] || '').trim(),
+      heure:  String(r[24] || '').trim(),
+      lieu:   String(r[25] || '').trim(),
+      tarif:  Number(r[27] || 0),
+      statut: statut || 'Inscrit'
+    });
+  });
+  var r0 = lignes[0];
+  return {status:'ok', dossier: {
+    code: code,
+    responsable: lireResponsable(r0) || String(r0[36] || '').trim(),
+    email: String(r0[15] || '').trim(),
+    statutPaiement: String(r0[21] || '').trim(),
+    membres: ordre.map(function(k) { return membres[k]; })
+  }};
+}
+
+// Demande d'ajout / de retrait d'activités : email à l'admin + accusé de réception à la famille
+function demanderModificationGAS(p) {
+  var lecture = lireDossierFamille(p.code, p.email);
+  if (lecture.status !== 'ok') return lecture;
+  var d = lecture.dossier;
+  if (_compteurDepasse('dm_' + d.code, 5, 3600)) return {status:'error', message:'Trop de demandes pour ce dossier, réessayez plus tard.'};
+  var retraits = (Array.isArray(p.retraits) ? p.retraits : []).slice(0, 20).map(function(x) { return _texteCourt(x, 200); }).filter(String);
+  var ajouts   = (Array.isArray(p.ajouts)   ? p.ajouts   : []).slice(0, 20).map(function(x) { return _texteCourt(x, 200); }).filter(String);
+  var commentaire = _texteCourt(p.commentaire, 2000);
+  if (!retraits.length && !ajouts.length && !commentaire) return {status:'error', message:'Indiquez au moins une modification.'};
+
+  var corps = 'Demande de modification — dossier ' + d.code + '\n'
+    + 'Responsable : ' + d.responsable + ' <' + d.email + '>\n\n'
+    + (retraits.length ? 'ACTIVITÉS À RETIRER :\n- ' + retraits.join('\n- ') + '\n\n' : '')
+    + (ajouts.length   ? 'ACTIVITÉS À AJOUTER :\n- ' + ajouts.join('\n- ') + '\n\n' : '')
+    + (commentaire ? 'Commentaire :\n' + commentaire + '\n\n' : '')
+    + '→ À traiter dans la console admin (Modifier / Ajouter / Supprimer une activité).';
+  envoyerEmail(EMAIL_ADMIN, '[FRI] Demande de modification ' + d.code, corps, {name: NOM_ASSO, replyTo: d.email});
+  envoyerEmail(d.email, 'Foyer Rural — demande de modification reçue (' + d.code + ')',
+    'Bonjour,\n\nNous avons bien reçu votre demande de modification pour le dossier ' + d.code + '.\n'
+    + 'Elle sera traitée par l\'équipe du Foyer Rural, qui reviendra vers vous si un complément ou un règlement est nécessaire.\n\n'
+    + corps.split('\n→')[0] + '\nCordialement,\n' + NOM_ASSO, {name: NOM_ASSO});
+  return {status:'ok'};
+}
+
+// Message libre envoyé depuis le site
+function envoyerMessageContactGAS(p) {
+  if (String(p.site_web || '')) return {status:'ok'}; // champ piège rempli par les robots : on ignore
+  var nom = _texteCourt(p.nom, 120), email = _texteCourt(p.email, 200).toLowerCase();
+  var code = _texteCourt(p.code, 12).toUpperCase(), sujet = _texteCourt(p.sujet, 150), message = _texteCourt(p.message, 3000);
+  if (!nom || !_emailValide(email)) return {status:'error', message:'Indiquez votre nom et une adresse email valide.'};
+  if (message.length < 5) return {status:'error', message:'Votre message est vide.'};
+  if (_compteurDepasse('msg_' + email, 3, 3600) || _compteurDepasse('msg_global', 60, 3600))
+    return {status:'error', message:'Trop de messages envoyés, réessayez plus tard.'};
+  var corps = 'Message reçu depuis le site d\'inscription\n\n'
+    + 'De : ' + nom + ' <' + email + '>\n'
+    + (code ? 'Dossier : ' + code + '\n' : '')
+    + 'Sujet : ' + (sujet || '(sans sujet)') + '\n\n' + message;
+  envoyerEmail(EMAIL_ADMIN, '[FRI] Message : ' + (sujet || nom), corps, {name: NOM_ASSO, replyTo: email});
+  envoyerEmail(email, 'Foyer Rural — nous avons bien reçu votre message',
+    'Bonjour ' + nom + ',\n\nNous avons bien reçu votre message et vous répondrons dès que possible.\n\n---\n' + message
+    + '\n\nCordialement,\n' + NOM_ASSO, {name: NOM_ASSO});
+  return {status:'ok'};
 }
 
 function addRegistration(rows, paymentStatus, payload) {

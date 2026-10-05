@@ -302,6 +302,39 @@
   .price-total { font-family: 'Playfair Display', serif; font-size: 32px; color: var(--green-light); }
   .price-sub { font-size: 12px; opacity: 0.6; margin-top: 4px; }
 
+  /* MENU D'ACCUEIL ET ESPACE FAMILLE */
+  .menu-accueil { max-width: 900px; margin: 0 auto; padding: 28px 24px 60px; }
+  .menu-titre { font-family: 'Playfair Display', serif; font-size: 26px; text-align: center; margin-bottom: 20px; color: var(--dark); }
+  .menu-grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .menu-carte {
+    display: flex; align-items: center; gap: 14px; text-align: left; width: 100%;
+    background: var(--white); border: 1.5px solid var(--border); border-radius: 14px;
+    padding: 18px; cursor: pointer; font-family: inherit; color: var(--dark);
+    box-shadow: var(--shadow); transition: transform .15s, border-color .15s;
+  }
+  .menu-carte:hover, .menu-carte:focus-visible { transform: translateY(-2px); border-color: var(--green); }
+  .menu-num {
+    flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%;
+    background: var(--green-pale); display: flex; align-items: center; justify-content: center; font-size: 22px;
+  }
+  .menu-carte strong { display: block; font-size: 16px; margin-bottom: 2px; }
+  .menu-carte span.menu-desc { font-size: 13px; color: var(--gray); line-height: 1.4; }
+  .vue-famille { display: none; }
+  .vue-famille.active { display: block; animation: fadeIn 0.3s ease; }
+  .lien-retour {
+    background: none; border: none; color: var(--green); font: 600 14px 'DM Sans', sans-serif;
+    cursor: pointer; padding: 6px 0; margin-bottom: 12px;
+  }
+  .lien-retour:hover { text-decoration: underline; }
+  .cat-activites { margin-bottom: 22px; }
+  .cat-activites h3 { font-size: 16px; color: var(--green); margin: 0 0 10px; border-bottom: 2px solid var(--green-pale); padding-bottom: 6px; }
+  .liste-activites { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .fiche-activite { background: var(--white); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+  .fiche-activite .fa-nom { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+  .fiche-activite .fa-tarif { margin-top: 6px; font-weight: 600; color: var(--green); }
+  .message-form-ok { background: var(--green-pale); border: 1px solid var(--green-light); border-radius: 10px; padding: 16px; font-weight: 600; color: var(--green); }
+  .champ-piege { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
   /* BUTTONS */
   .btn-nav { display: flex; justify-content: space-between; margin-top: 32px; gap: 12px; }
   .btn {
@@ -519,12 +552,94 @@
     <span class="badge">👨‍👩‍👧‍👦 Jeunes & Adultes</span>
     <span class="badge">📍 Isneauville</span>
   </div>
-  <div style="margin-top:16px;">
-    <button onclick="afficherSectionDocuments()"
-      style="background:var(--gold);color:var(--dark);border:none;border-radius:10px;padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,0.3);">
-      📄 J'ai déjà un dossier 2026-2027<br><span style="font-size:12px;font-weight:500;">Envoyer QS santé, Règlement intérieur ou Pièces justificatives</span>
+</div>
+
+<!-- ======================== MENU D'ACCUEIL ======================== -->
+<div id="espace-famille">
+<div class="menu-accueil vue-famille active" id="vue-menu">
+  <h2 class="menu-titre">Que souhaitez-vous faire ?</h2>
+  <div class="menu-grille">
+    <button type="button" class="menu-carte" onclick="ouvrirVue('activites')">
+      <span class="menu-num">🔎</span>
+      <span><strong>1. Consulter les activités</strong><span class="menu-desc">Horaires, lieux, tarifs et places disponibles</span></span>
+    </button>
+    <button type="button" class="menu-carte" onclick="ouvrirVue('inscription')">
+      <span class="menu-num">✍️</span>
+      <span><strong>2. Créer un compte</strong><span class="menu-desc">Inscrire votre famille pour la saison 2026/2027</span></span>
+    </button>
+    <button type="button" class="menu-carte" onclick="ouvrirVue('compte')">
+      <span class="menu-num">👤</span>
+      <span><strong>3. Consulter votre compte</strong><span class="menu-desc">Vos activités et l'état de votre règlement</span></span>
+    </button>
+    <button type="button" class="menu-carte" onclick="ouvrirVue('modifier')">
+      <span class="menu-num">🔄</span>
+      <span><strong>4. Modifier vos activités</strong><span class="menu-desc">Demander l'ajout ou le retrait d'une activité</span></span>
+    </button>
+    <button type="button" class="menu-carte" onclick="ouvrirVue('documents')">
+      <span class="menu-num">📄</span>
+      <span><strong>5. Envoyer des documents</strong><span class="menu-desc">Questionnaire santé, règlement intérieur, justificatifs</span></span>
+    </button>
+    <button type="button" class="menu-carte" onclick="ouvrirVue('message')">
+      <span class="menu-num">✉️</span>
+      <span><strong>6. Envoyer un message</strong><span class="menu-desc">Une question ? Écrivez au Foyer Rural</span></span>
     </button>
   </div>
+</div>
+
+<!-- 1. Consulter les activités -->
+<div class="main vue-famille" id="vue-activites">
+  <button type="button" class="lien-retour" onclick="ouvrirVue('menu')">← Retour au menu</button>
+  <div class="section-title">🔎 Les activités 2026/2027</div>
+  <div class="field" style="margin:12px 0 20px;">
+    <label for="filtre-activites">Rechercher une activité, un jour, un lieu…</label>
+    <input type="search" id="filtre-activites" placeholder="ex : yoga, mercredi, théâtre" oninput="afficherCatalogueActivites()">
+  </div>
+  <div id="catalogue-activites"></div>
+  <div style="text-align:center;margin-top:24px;">
+    <button type="button" class="btn btn-primary" onclick="ouvrirVue('inscription')">✍️ S'inscrire</button>
+  </div>
+</div>
+
+<!-- 3. Consulter votre compte -->
+<div class="main vue-famille" id="vue-compte">
+  <button type="button" class="lien-retour" onclick="ouvrirVue('menu')">← Retour au menu</button>
+  <div class="section-title">👤 Votre compte</div>
+  <div class="section-sub">Identifiez-vous avec votre code dossier (reçu par email lors de l'inscription) et l'email du dossier.</div>
+  <div class="card" id="compte-ident"></div>
+  <div id="compte-resultat"></div>
+</div>
+
+<!-- 4. Modifier vos activités -->
+<div class="main vue-famille" id="vue-modifier">
+  <button type="button" class="lien-retour" onclick="ouvrirVue('menu')">← Retour au menu</button>
+  <div class="section-title">🔄 Modifier vos activités</div>
+  <div class="section-sub">Votre demande sera transmise au Foyer Rural, qui l'appliquera et vous indiquera s'il y a un complément à régler ou un avoir.</div>
+  <div class="card" id="modifier-ident"></div>
+  <div id="modifier-formulaire"></div>
+</div>
+
+<!-- 6. Envoyer un message -->
+<div class="main vue-famille" id="vue-message">
+  <button type="button" class="lien-retour" onclick="ouvrirVue('menu')">← Retour au menu</button>
+  <div class="section-title">✉️ Envoyer un message</div>
+  <div class="section-sub">Le Foyer Rural vous répondra par email.</div>
+  <form class="card" id="form-message" onsubmit="event.preventDefault(); envoyerMessageFamille();" novalidate>
+    <div class="form-grid">
+      <div class="field"><label for="msg-nom">Nom et prénom <span class="req">*</span></label><input type="text" id="msg-nom" autocomplete="name" maxlength="120"></div>
+      <div class="field"><label for="msg-email">E-mail <span class="req">*</span></label><input type="email" id="msg-email" autocomplete="email" maxlength="200"></div>
+      <div class="field"><label for="msg-code">Code dossier <small style="color:#888">(si vous en avez un)</small></label><input type="text" id="msg-code" placeholder="FRI-XXXX" maxlength="8" style="text-transform:uppercase"></div>
+      <div class="field"><label for="msg-sujet">Sujet</label><input type="text" id="msg-sujet" maxlength="150"></div>
+    </div>
+    <div class="field" style="margin-top:14px;"><label for="msg-texte">Votre message <span class="req">*</span></label><textarea id="msg-texte" rows="6" maxlength="3000"></textarea></div>
+    <div class="champ-piege" aria-hidden="true"><label>Ne pas remplir <input type="text" id="msg-site" tabindex="-1" autocomplete="off"></label></div>
+    <div style="margin-top:16px;"><button type="submit" class="btn btn-primary" id="btn-envoyer-message">✉️ Envoyer</button></div>
+  </form>
+  <div id="message-resultat"></div>
+</div>
+</div><!-- /espace-famille -->
+
+<div id="lien-retour-inscription" style="display:none;max-width:900px;margin:0 auto;padding:12px 24px 0;">
+  <button type="button" class="lien-retour" style="margin:0" onclick="ouvrirVue('menu')">← Retour au menu</button>
 </div>
 
 <!-- STEPS NAV -->
@@ -10584,6 +10699,336 @@ function exportSingleExcel(id) {
   }, 800);
 })();
 </script>
+<script>
+// ============================================================
+// MENU D'ACCUEIL ET ESPACE FAMILLE
+// Vues : menu, activites, inscription, compte, modifier, documents, message
+// (adresse : #activites, #compte… ; ?mode=documents ouvre directement les documents)
+// ============================================================
+const VUES_SITE = ['menu', 'activites', 'inscription', 'compte', 'modifier', 'documents', 'message'];
+let _identFamille = null; // { code, email, dossier } après une identification réussie
+
+function ouvrirVue(nom, sansHistorique) {
+  if (VUES_SITE.indexOf(nom) < 0) nom = 'menu';
+  const hero = document.querySelector('.hero');
+  const famille = document.getElementById('espace-famille');
+  const steps = document.querySelector('.steps-nav');
+  const mainInscription = document.getElementById('section-1') ? document.getElementById('section-1').closest('.main') : null;
+  const docs = document.getElementById('section-documents');
+  const retourInscription = document.getElementById('lien-retour-inscription');
+
+  document.querySelectorAll('.vue-famille').forEach(v => v.classList.remove('active'));
+  [steps, mainInscription, docs, retourInscription].forEach(el => { if (el) el.style.display = 'none'; });
+  if (famille) famille.style.display = 'none';
+  if (hero) hero.style.display = (nom === 'menu') ? '' : 'none';
+
+  if (nom === 'inscription') {
+    if (steps) steps.style.display = '';
+    if (mainInscription) mainInscription.style.display = '';
+    if (retourInscription) retourInscription.style.display = 'block';
+    // La page documents retire la classe "active" des étapes : on réaffiche l'étape en cours
+    if (!document.querySelector('.section.active')) {
+      const sec = document.getElementById('section-' + (state.step || 1));
+      if (sec) sec.classList.add('active');
+    }
+  } else if (nom === 'documents') {
+    afficherSectionDocuments();
+    if (docs && !document.getElementById('retour-docs')) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.id = 'retour-docs'; b.className = 'lien-retour';
+      b.textContent = '← Retour au menu';
+      b.onclick = () => ouvrirVue('menu');
+      docs.insertBefore(b, docs.firstChild);
+    }
+  } else {
+    if (famille) famille.style.display = '';
+    const vue = document.getElementById('vue-' + nom);
+    if (vue) vue.classList.add('active');
+    if (nom === 'activites') { afficherCatalogueActivites(); loadPlaces().then(afficherCatalogueActivites).catch(() => {}); }
+    if (nom === 'compte') preparerIdentification('compte');
+    if (nom === 'modifier') preparerIdentification('modifier');
+    if (nom === 'message') {
+      document.getElementById('form-message').style.display = '';
+      document.getElementById('message-resultat').innerHTML = '';
+      if (_identFamille && !document.getElementById('msg-code').value) document.getElementById('msg-code').value = _identFamille.code;
+    }
+  }
+  if (!sansHistorique) {
+    const q = new URLSearchParams(location.search); q.delete('mode'); // ?mode=documents ne doit pas rester collé
+    const base = location.pathname + (q.toString() ? '?' + q.toString() : '');
+    try { history.pushState({ vue: nom }, '', nom === 'menu' ? base : base + '#' + nom); } catch(e) {}
+  }
+  window.scrollTo(0, 0);
+}
+
+window.addEventListener('popstate', function() {
+  const h = (location.hash || '').replace('#', '');
+  ouvrirVue(VUES_SITE.indexOf(h) >= 0 ? h : 'menu', true);
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  const h = (location.hash || '').replace('#', '');
+  if (h.indexOf('paiement-valide') === 0) return;               // retour HelloAsso : géré ailleurs
+  if (h.indexOf('paiement-erreur') === 0) { ouvrirVue('inscription', true); return; }
+  const mode = new URLSearchParams(location.search).get('mode');
+  if (mode === 'documents') { ouvrirVue('documents', true); return; }
+  ouvrirVue(VUES_SITE.indexOf(h) >= 0 ? h : 'menu', true);
+});
+
+// ── 1. Catalogue des activités ──
+function afficherCatalogueActivites() {
+  const cont = document.getElementById('catalogue-activites');
+  if (!cont) return;
+  const filtre = (document.getElementById('filtre-activites')?.value || '').trim().toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const norm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const lieux = (typeof SALLES_LABELS !== 'undefined') ? SALLES_LABELS : {};
+  const dejaVu = new Set();
+  let html = '';
+  const blocCategorie = (titre, acts) => {
+    const fiches = acts.filter(a => {
+      if (dejaVu.has(a.id)) return false;
+      const texte = norm([a.name, a.jour, a.heure, a.lieu, lieux[a.lieu], a.animateur, titre].join(' '));
+      return !filtre || texte.indexOf(filtre) >= 0;
+    }).map(a => {
+      dejaVu.add(a.id);
+      const tarif = a.isno === a.hc ? a.isno + ' €' : a.isno + ' € (Isneauville) · ' + a.hc + ' € (hors commune)';
+      return '<div class="fiche-activite">'
+        + '<div class="fa-nom">' + escHtml(String(a.name).replace(/\n/g, ' — ')) + '</div>'
+        + '<div>📅 ' + escHtml(a.jour || '') + (a.heure ? ' · ' + escHtml(a.heure.replace('/', ' – ')) : '') + '</div>'
+        + (a.lieu ? '<div>📍 ' + escHtml(lieux[a.lieu] || a.lieu) + '</div>' : '')
+        + (a.animateur ? '<div>👤 ' + escHtml(a.animateur) + '</div>' : '')
+        + (a.note ? '<div style="color:var(--gray);font-size:12px;">' + escHtml(a.note) + '</div>' : '')
+        + '<div class="fa-tarif">' + tarif + '</div>'
+        + '<div style="margin-top:4px;">' + placeBadgeHtml(a.id) + '</div>'
+        + '</div>';
+    }).join('');
+    if (fiches) html += '<div class="cat-activites"><h3>' + escHtml(titre) + '</h3><div class="liste-activites">' + fiches + '</div></div>';
+  };
+  for (const section of Object.values(ACTIVITIES)) {
+    for (const cat of Object.values(section.cats)) {
+      if (cat.acts) blocCategorie((cat.icon ? cat.icon + ' ' : '') + cat.label, cat.acts);
+      else for (const sub of Object.values(cat)) if (sub && sub.acts) blocCategorie((sub.icon ? sub.icon + ' ' : '') + sub.label, sub.acts);
+    }
+  }
+  cont.innerHTML = html || '<p style="color:var(--gray)">Aucune activité ne correspond à votre recherche.</p>';
+}
+
+// ── Identification famille (code dossier + email), partagée par « compte » et « modifier » ──
+function preparerIdentification(vue) {
+  const bloc = document.getElementById(vue + '-ident');
+  if (!bloc) return;
+  if (_identFamille) { afficherApresIdentification(vue); return; }
+  bloc.style.display = '';
+  bloc.innerHTML = '<form onsubmit="event.preventDefault(); identifierFamille(\'' + vue + '\');" novalidate>'
+    + '<div class="form-grid">'
+    + '<div class="field"><label for="' + vue + '-code">Code dossier</label><input type="text" id="' + vue + '-code" placeholder="FRI-XXXX" maxlength="8" style="text-transform:uppercase" autocomplete="off"></div>'
+    + '<div class="field"><label for="' + vue + '-email">E-mail du dossier</label><input type="email" id="' + vue + '-email" autocomplete="email"></div>'
+    + '</div>'
+    + '<div style="margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;">'
+    + '<button type="submit" class="btn btn-primary" id="' + vue + '-btn-ident">🔓 Accéder à mon dossier</button>'
+    + '<span id="' + vue + '-ident-msg" role="status" style="font-size:13px;"></span></div>'
+    + '<p style="font-size:12px;color:var(--gray);margin-top:10px;">Code perdu ? Utilisez « Envoyer un message » : le Foyer Rural vous le renverra.</p>'
+    + '</form>';
+  document.getElementById(vue + '-resultat') && (document.getElementById(vue + '-resultat').innerHTML = '');
+  document.getElementById(vue + '-formulaire') && (document.getElementById(vue + '-formulaire').innerHTML = '');
+}
+
+async function identifierFamille(vue) {
+  const code = (document.getElementById(vue + '-code')?.value || '').trim().toUpperCase();
+  const email = (document.getElementById(vue + '-email')?.value || '').trim();
+  const msg = document.getElementById(vue + '-ident-msg');
+  const btn = document.getElementById(vue + '-btn-ident');
+  const dire = (t, c) => { if (msg) { msg.textContent = t; msg.style.color = c || 'var(--gray)'; } };
+  if (!/^FRI-[A-Z0-9]{4}$/.test(code)) { dire('Le code dossier a la forme FRI-XXXX.', 'var(--red)'); return; }
+  if (!isValidEmail(email)) { dire('Adresse email invalide.', 'var(--red)'); return; }
+  const url = getAppsScriptUrl();
+  if (!url) { dire('Serveur non configuré.', 'var(--red)'); return; }
+  if (btn) btn.disabled = true;
+  dire('⏳ Vérification…');
+  try {
+    const r = await callAppsScriptFetch(url, { action: 'consulterDossier', code: code, email: email });
+    const d = (r && r.data) ? nettoyerTexteRecu(r.data) : null;
+    if (d && d.status === 'ok' && d.dossier) {
+      _identFamille = { code: code, email: email, dossier: d.dossier };
+      afficherApresIdentification(vue);
+    } else {
+      dire('❌ ' + ((d && d.message) || 'Serveur injoignable, réessayez.'), 'var(--red)');
+    }
+  } catch(e) {
+    dire('❌ ' + e.message, 'var(--red)');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function deconnecterFamille(vue) {
+  _identFamille = null;
+  preparerIdentification(vue);
+}
+
+function enteteFamille(vue) {
+  const d = _identFamille.dossier;
+  return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">'
+    + '<div><strong>Dossier ' + escHtml(d.code) + '</strong>' + (d.responsable ? ' — ' + escHtml(d.responsable) : '') + '</div>'
+    + '<button type="button" class="lien-retour" style="margin:0" onclick="deconnecterFamille(\'' + vue + '\')">Changer de dossier</button></div>';
+}
+
+function afficherApresIdentification(vue) {
+  const bloc = document.getElementById(vue + '-ident');
+  if (bloc) bloc.style.display = 'none';
+  if (vue === 'compte') afficherCompteFamille();
+  else afficherFormulaireModification();
+}
+
+// ── 3. Consulter votre compte ──
+function afficherCompteFamille() {
+  const d = _identFamille.dossier;
+  let html = '<div class="card">' + enteteFamille('compte');
+  if (d.statutPaiement) html += '<div style="margin:8px 0 4px;font-size:14px;">💳 Règlement : <strong>' + escHtml(d.statutPaiement) + '</strong></div>';
+  html += '</div>';
+  (d.membres || []).forEach(m => {
+    html += '<div class="card"><div class="card-title">👤 ' + escHtml((m.prenom + ' ' + m.nom).trim()) + '</div>';
+    (m.activites || []).forEach(a => {
+      const enAttente = /attente/i.test(a.statut);
+      html += '<div style="padding:8px 0;border-top:1px solid var(--border);font-size:14px;">'
+        + '<div style="font-weight:600;">' + escHtml(a.nom.replace(/\n/g, ' — ')) + '</div>'
+        + '<div style="color:var(--gray);font-size:13px;">' + escHtml([a.jour, a.heure, a.lieu].filter(Boolean).join(' · ')) + '</div>'
+        + '<div style="font-size:13px;margin-top:2px;">' + (enAttente ? '⏳ ' : '✅ ') + escHtml(a.statut)
+        + (a.tarif ? ' — ' + Number(a.tarif).toFixed(2) + ' €' : '') + '</div></div>';
+    });
+    html += '</div>';
+  });
+  html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">'
+    + '<button type="button" class="btn btn-secondary" onclick="ouvrirVue(\'modifier\')">🔄 Modifier mes activités</button>'
+    + '<button type="button" class="btn btn-secondary" onclick="ouvrirVue(\'documents\')">📄 Envoyer des documents</button></div>';
+  document.getElementById('compte-resultat').innerHTML = html;
+}
+
+// ── 4. Modifier vos activités (demande transmise à l'admin) ──
+let _ajoutsDemandes = [];
+function afficherFormulaireModification() {
+  const d = _identFamille.dossier;
+  _ajoutsDemandes = [];
+  let html = '<div class="card">' + enteteFamille('modifier') + '</div>';
+  html += '<div class="card"><div class="card-title">➖ Activités à retirer</div>';
+  let n = 0;
+  (d.membres || []).forEach(m => (m.activites || []).forEach(a => {
+    const libelle = (m.prenom + ' ' + m.nom).trim() + ' : ' + a.nom.replace(/\n/g, ' — ') + (a.jour ? ' (' + a.jour + (a.heure ? ' ' + a.heure : '') + ')' : '');
+    html += '<label style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:14px;cursor:pointer;">'
+      + '<input type="checkbox" class="modif-retrait" value="' + escHtml(libelle) + '" style="margin-top:3px;"> ' + escHtml(libelle) + '</label>';
+    n++;
+  }));
+  if (!n) html += '<p style="color:var(--gray);font-size:14px;">Aucune activité enregistrée.</p>';
+  html += '</div>';
+
+  const options = getAllActs().filter((a, i, t) => t.findIndex(b => b.id === a.id) === i)
+    .map(a => '<option value="' + escHtml(a.id) + '">' + escHtml(a.name.replace(/\n/g, ' — ') + ' — ' + (a.jour || '') + ' ' + (a.heure || '')) + '</option>').join('');
+  const optMembres = (d.membres || []).map(m => '<option>' + escHtml((m.prenom + ' ' + m.nom).trim()) + '</option>').join('')
+    + '<option value="__nouveau">Un nouveau membre de la famille</option>';
+  html += '<div class="card"><div class="card-title">➕ Activités à ajouter</div>'
+    + '<div class="form-grid">'
+    + '<div class="field"><label for="modif-membre">Pour</label><select id="modif-membre">' + optMembres + '</select></div>'
+    + '<div class="field"><label for="modif-activite">Activité</label><select id="modif-activite"><option value="">— Choisir —</option>' + options + '</select></div>'
+    + '</div><button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="ajouterDemandeActivite()">➕ Ajouter à ma demande</button>'
+    + '<ul id="modif-liste-ajouts" style="margin:12px 0 0;padding-left:18px;font-size:14px;"></ul></div>';
+  html += '<div class="card"><div class="field"><label for="modif-commentaire">Commentaire <small style="color:#888">(nouveau membre : nom, prénom, date de naissance)</small></label>'
+    + '<textarea id="modif-commentaire" rows="4" maxlength="2000"></textarea></div>'
+    + '<div style="margin-top:14px;"><button type="button" class="btn btn-primary" id="btn-envoyer-modif" onclick="envoyerDemandeModification()">📨 Envoyer ma demande</button></div>'
+    + '<div id="modif-msg" role="status" style="margin-top:10px;font-size:14px;"></div></div>';
+  document.getElementById('modifier-formulaire').innerHTML = html;
+}
+
+function ajouterDemandeActivite() {
+  const selA = document.getElementById('modif-activite');
+  const selM = document.getElementById('modif-membre');
+  const act = getActById(selA.value);
+  if (!act) { showToast('Choisissez une activité', 'orange'); return; }
+  const pour = selM.value === '__nouveau' ? 'Nouveau membre' : selM.value;
+  const libelle = pour + ' : ' + act.name.replace(/\n/g, ' — ') + ' (' + (act.jour || '') + ' ' + (act.heure || '') + ')';
+  if (_ajoutsDemandes.indexOf(libelle) < 0) _ajoutsDemandes.push(libelle);
+  selA.value = '';
+  majListeAjouts();
+}
+
+function retirerDemandeActivite(i) { _ajoutsDemandes.splice(i, 1); majListeAjouts(); }
+
+function majListeAjouts() {
+  const ul = document.getElementById('modif-liste-ajouts');
+  if (ul) ul.innerHTML = _ajoutsDemandes.map((l, i) =>
+    '<li style="margin-bottom:4px;">' + escHtml(l) + ' <button type="button" class="lien-retour" style="margin:0;padding:0 6px;color:var(--red)" onclick="retirerDemandeActivite(' + i + ')" aria-label="Retirer">✕</button></li>').join('');
+}
+
+async function envoyerDemandeModification() {
+  const msg = document.getElementById('modif-msg');
+  const btn = document.getElementById('btn-envoyer-modif');
+  const retraits = Array.from(document.querySelectorAll('.modif-retrait:checked')).map(c => c.value);
+  const commentaire = (document.getElementById('modif-commentaire')?.value || '').trim();
+  if (!retraits.length && !_ajoutsDemandes.length && !commentaire) {
+    msg.innerHTML = '<span style="color:var(--red)">Cochez une activité à retirer, ajoutez-en une ou écrivez un commentaire.</span>';
+    return;
+  }
+  btn.disabled = true;
+  msg.textContent = '⏳ Envoi…';
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), {
+      action: 'demanderModification', code: _identFamille.code, email: _identFamille.email,
+      retraits: retraits, ajouts: _ajoutsDemandes, commentaire: commentaire
+    });
+    const d = r && r.data;
+    if (d && d.status === 'ok') {
+      document.getElementById('modifier-formulaire').innerHTML = '<div class="message-form-ok">✅ Votre demande a été envoyée au Foyer Rural. '
+        + 'Un accusé de réception vous a été envoyé par email ; l\'équipe vous recontactera si un complément est à régler.</div>'
+        + '<button type="button" class="btn btn-secondary" style="margin-top:14px;" onclick="ouvrirVue(\'menu\')">← Retour au menu</button>';
+    } else {
+      msg.innerHTML = '<span style="color:var(--red)">❌ ' + escHtml((d && d.message) || 'Envoi impossible, réessayez.') + '</span>';
+      btn.disabled = false;
+    }
+  } catch(e) {
+    msg.innerHTML = '<span style="color:var(--red)">❌ ' + escHtml(e.message) + '</span>';
+    btn.disabled = false;
+  }
+}
+
+// ── 6. Envoyer un message ──
+async function envoyerMessageFamille() {
+  const val = id => (document.getElementById(id)?.value || '').trim();
+  const res = document.getElementById('message-resultat');
+  const btn = document.getElementById('btn-envoyer-message');
+  const erreurs = [];
+  if (!val('msg-nom')) erreurs.push('msg-nom');
+  if (!isValidEmail(val('msg-email'))) erreurs.push('msg-email');
+  if (val('msg-texte').length < 5) erreurs.push('msg-texte');
+  ['msg-nom', 'msg-email', 'msg-texte'].forEach(id => document.getElementById(id).classList.toggle('error', erreurs.indexOf(id) >= 0));
+  if (erreurs.length) {
+    showToast('Complétez : ' + erreurs.map(id => libelleChamp(document.getElementById(id))).join(', '), 'red', 5000);
+    allerAuChamp(document.getElementById(erreurs[0]));
+    return;
+  }
+  const url = getAppsScriptUrl();
+  if (!url) { showToast('Serveur non configuré', 'red'); return; }
+  btn.disabled = true; btn.textContent = '⏳ Envoi…';
+  try {
+    const r = await callAppsScriptFetch(url, {
+      action: 'envoyerMessage', nom: val('msg-nom'), email: val('msg-email'),
+      code: val('msg-code').toUpperCase(), sujet: val('msg-sujet'), message: val('msg-texte'), site_web: val('msg-site')
+    });
+    const d = r && r.data;
+    if (d && d.status === 'ok') {
+      document.getElementById('form-message').style.display = 'none';
+      res.innerHTML = '<div class="message-form-ok">✅ Message envoyé ! Une copie vous a été adressée par email. Le Foyer Rural vous répondra dès que possible.</div>'
+        + '<button type="button" class="btn btn-secondary" style="margin-top:14px;" onclick="ouvrirVue(\'menu\')">← Retour au menu</button>';
+    } else {
+      showToast('❌ ' + ((d && d.message) || 'Envoi impossible, réessayez.'), 'red', 5000);
+    }
+  } catch(e) {
+    showToast('❌ ' + e.message, 'red', 5000);
+  } finally {
+    btn.disabled = false; btn.textContent = '✉️ Envoyer';
+  }
+}
+</script>
+
 <script>
 // ============================================================
 // ACCESSIBILITÉ ET CONFORT DE SAISIE

@@ -4026,6 +4026,9 @@ function validerPaiementSheet(rows, code, modeForce, montantHA, payerInfo) {
 // params : { ss, code, actNomClean, typeModif ('ajout'|'suppression'),
 //            estRegle, totalPayeAvant, emailAdherent, responsable }
 // ══════════════════════════════════════════════════════════════════════════════
+// Frais de dossier retenus (non remboursables) lors de la suppression d'une activité d'un dossier réglé
+var FRAIS_DOSSIER_SUPPRESSION = 10;
+
 function appliquerModificationDossier(params) {
   var ss           = params.ss;
   var code         = params.code;
@@ -4063,8 +4066,17 @@ function appliquerModificationDossier(params) {
   // ── 3. Calcul avoir ou supplément (seulement si réglé) ──
   var avoir = 0;
   var supplement = 0;
+  var adhesionNonRemboursee = 0, fraisDossier = 0;
   if (estRegle && totalPayeAvant > 0) {
     var diff = Math.round((totalPayeAvant - totalApres) * 100) / 100;
+    if (typeModif === 'suppression' && diff > 0) {
+      // Suppression sur dossier réglé : l'adhésion FNSMR déjà réglée n'est jamais remboursée
+      // (cas d'un membre qui n'a plus d'activité) et des frais de dossier sont retenus.
+      adhesionNonRemboursee = Math.max(0, (Number(params.fnsmrPaye) || 0) - (Number(infos.fnsmr) || 0));
+      fraisDossier = FRAIS_DOSSIER_SUPPRESSION;
+      diff = Math.round((diff - adhesionNonRemboursee - fraisDossier) * 100) / 100;
+      if (diff < 0) diff = 0;
+    }
     if (diff > 0)      { avoir      = diff; }  // remboursement
     else if (diff < 0) { supplement = -diff; } // complément à payer
   }
@@ -4158,9 +4170,20 @@ function appliquerModificationDossier(params) {
           'Paiement sécurisé par carte bancaire — ou par chèque à l\'ordre du FRI / lors des permanences')
       : '';
 
+    // Retenues sur l'avoir (suppression sur dossier réglé)
+    var detailRetenuesHtml = (fraisDossier > 0 || adhesionNonRemboursee > 0)
+      ? '<div style="font-size:12px;color:#555;margin-top:8px;border-top:1px dashed #e0b080;padding-top:6px">'
+        + 'Calcul : montant supprimé ' + (Math.round((totalPayeAvant - totalApres) * 100) / 100).toFixed(2) + ' €'
+        + (adhesionNonRemboursee > 0 ? ' − adhésion FNSMR non remboursable ' + adhesionNonRemboursee.toFixed(2) + ' €' : '')
+        + (fraisDossier > 0 ? ' − frais de dossier ' + fraisDossier.toFixed(2) + ' € (non remboursables)' : '')
+        + ' = <strong>' + avoir.toFixed(2) + ' €</strong></div>'
+      : '';
     var regleHtml = '';
     if (estRegle) {
-      if (avoir > 0) {
+      if (typeModif === 'suppression' && avoir <= 0 && (fraisDossier > 0 || adhesionNonRemboursee > 0)) {
+        regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff3e0;border-left:4px solid #e65100;border-radius:6px">'
+          + '<div style="font-weight:700;color:#e65100;margin-bottom:6px">Aucun avoir</div>' + detailRetenuesHtml + '</div>';
+      } else if (avoir > 0) {
         regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff3e0;border-left:4px solid #e65100;border-radius:6px">'
           + '<div style="font-weight:700;color:#e65100;margin-bottom:6px">&#x1F4B3; Avoir enregistré : ' + avoir.toFixed(2) + ' €</div>'
           + (codeAvoirGenere ? '<div style="background:#d8f3dc;border:2px solid #52b788;border-radius:8px;padding:10px 14px;margin:8px 0;text-align:center">'
@@ -4169,6 +4192,7 @@ function appliquerModificationDossier(params) {
             + '<div style="font-size:11px;color:#555;margin-top:4px">Conservez ce code — il vous sera demandé lors de votre prochaine inscription</div>'
             + '</div>' : '')
           + '<div style="font-size:13px;color:#555">Ce montant sera déduit de votre prochain règlement sur présentation de ce code.</div>'
+          + detailRetenuesHtml
           + '</div>';
       } else if (supplement > 0) {
         regleHtml = '<div style="margin:16px 0;padding:14px 18px;background:#fff8e1;border-left:4px solid #f9a825;border-radius:6px">'
@@ -4223,6 +4247,8 @@ function appliquerModificationDossier(params) {
 
     var regleTexte = estRegle
       ? (avoir > 0 ? '\n\nAvoir enregistré : ' + avoir.toFixed(2) + ' €'
+          + (fraisDossier > 0 ? ' (frais de dossier de ' + fraisDossier.toFixed(2) + ' € retenus'
+             + (adhesionNonRemboursee > 0 ? ', adhésion FNSMR non remboursable' : '') + ')' : '')
         : supplement > 0 ? '\n\nSupplément à régler : ' + supplement.toFixed(2) + ' €'
         : '\n\nAucune différence de règlement.')
       : (montantARegler > 0 ? '\n\nVotre dossier n\'est pas encore réglé — montant total à régler : ' + montantARegler.toFixed(2) + ' €' : '');
@@ -4665,6 +4691,7 @@ function supprimerActiviteDossierSheet(code, actNom, actId, membreNom, avoirMont
     + ' | totalPayé:' + totalPayeAvecFNSMR + ' | totalDûApres:' + totalDuApres + ' | avoir:' + avoir);
 
   // ── Passe 2 : marquer la ligne supprimée en orange ──
+  var ligneSupprimeeRow = 0;
   if (sheet && sheet.getLastRow() > 1) {
     var data2 = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
     for (var j = 0; j < data2.length; j++) {
@@ -4678,7 +4705,7 @@ function supprimerActiviteDossierSheet(code, actNom, actId, membreNom, avoirMont
       sheet.getRange(j + 2, 22).setValue('&#x1F5D1; Activité supprimée').setFontColor('#e65100').setFontWeight('bold');
       sheet.getRange(j + 2, 40).setValue('Supprimée').setFontColor('#bf360c').setFontWeight('bold');
       sheet.getRange(j + 2, 30).setValue(0).setFontColor('#e65100'); // col 30 AD = 0 (ligne supprimée)
-      if (avoir > 0) sheet.getRange(j + 2, 34).setValue('Avoir suppression : ' + avoir.toFixed(2) + ' €');
+      ligneSupprimeeRow = j + 2;
       deleted++;
       break;
     }
@@ -4721,12 +4748,18 @@ function supprimerActiviteDossierSheet(code, actNom, actId, membreNom, avoirMont
     ss: ss, code: code, actNomClean: actNomClean,
     typeModif: 'suppression', estRegle: true,
     totalPayeAvant: totalPayeAvecFNSMR,
+    fnsmrPaye: fnsmrTotal,
     emailAdherent: emailAdherent, responsable: responsable,
     commentaireAdmin: commentaireAdmin || '',
     montantModifie: montantModifie === true || montantModifie === 'true',
     membreNomLog: membreNom || ''
   });
   var avoir = modifResultSuppr.avoir;
+  if (ligneSupprimeeRow) {
+    sheet.getRange(ligneSupprimeeRow, 34).setValue(avoir > 0
+      ? 'Avoir suppression : ' + avoir.toFixed(2) + ' € (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)'
+      : 'Suppression — aucun avoir (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)');
+  }
 
   Logger.log('✅ supprimerActiviteDossierSheet v8.8 terminé — deleted:' + deleted + ' avoir:' + avoir + '€');
   return { deleted: deleted, avoir: avoir, nouveauTotal: modifResultSuppr.totalApres };

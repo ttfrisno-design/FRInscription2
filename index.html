@@ -1359,6 +1359,9 @@ if (FRI_ENV === 'test') {
 // Proratisés : activités et forfaits (Country, Marche nordique).
 // Non proratisés : adhésion FNSMR 15 €, licence FFTT.
 // ============================================================
+// Frais de dossier retenus (non remboursables) lors de la suppression d'une activité d'un dossier réglé
+const FRAIS_DOSSIER_SUPPRESSION = 10;
+
 const PRORATA_DEBUT = '2027-01-01';
 const SAISON_PREMIERE_SEMAINE = '2026-09-14';   // lundi de la 1re semaine d'activité
 const SAISON_NB_SEMAINES = 34;
@@ -10451,10 +10454,12 @@ function ouvrirSupprActivite(code) {
             if (!isWaitingL && aRemise && actObj.remiseEligible !== false && !actObj.isTT) {
               avoir = Math.round(avoir * 0.85 * 100) / 100;
             }
+            if (!isWaitingL) avoir = Math.max(0, Math.round((avoir - FRAIS_DOSSIER_SUPPRESSION) * 100) / 100);
             const borderColor = isWaitingL ? '#e65100' : '#ddd';
             const avoirHtml = isWaitingL
               ? '<div style="font-size:13px;color:#e65100;font-weight:700">⏳ Liste d\'attente</div><div style="font-size:10px;color:#888">0 € — aucun avoir</div>'
-              : '<div style="font-size:13px;color:#e65100;font-weight:700">Avoir : ' + avoir.toFixed(2) + ' €</div>' + (aRemise ? '<div style="font-size:10px;color:#888">remise 15% appliquée</div>' : '');
+              : '<div style="font-size:13px;color:#e65100;font-weight:700">Avoir : ' + avoir.toFixed(2) + ' €</div>'
+                + '<div style="font-size:10px;color:#888">frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € déduits' + (aRemise ? ' · remise 15%' : '') + '</div>';
             return `<div style="border:1px solid ${borderColor};border-radius:8px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:background 0.15s;background:${isWaitingL ? '#fff3e0' : 'white'}"
                       onmouseenter="this.style.background='#fff3e0'"
                       onmouseleave="this.style.background='${isWaitingL ? '#fff3e0' : 'white'}'"
@@ -10493,13 +10498,15 @@ async function confirmerSupprActivite(code, ligneIdx) {
   // Détecter si le dossier est réglé
   const estRegle = reg.status && reg.status !== 'pending_manual';
 
-  // Calcul avoir (seulement si réglé)
+  // Calcul avoir (seulement si réglé) : cotisation remboursée, adhésion jamais remboursée,
+  // frais de dossier retenus (le serveur recalcule le montant exact)
   let avoir = 0;
   if (estRegle) {
     avoir = l.prix;
     if (aRemise && actObj.remiseEligible !== false && !actObj.isTT) {
       avoir = Math.round(avoir * 0.85 * 100) / 100;
     }
+    avoir = Math.max(0, Math.round((avoir - FRAIS_DOSSIER_SUPPRESSION) * 100) / 100);
   }
 
   const montantParDefaut = estRegle ? avoir : l.prix;
@@ -10519,7 +10526,9 @@ async function confirmerSupprActivite(code, ligneIdx) {
         <div style="font-weight:700;font-size:14px;color:#1a2e22;margin-bottom:10px;">${l.actNom}</div>
         <div style="background:#fdf3f2;border:1px solid #e74c3c;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#7a2e22;">
           ${estRegle
-            ? 'Activité déjà réglée → fond orange dans Inscriptions, un avoir sera crédité.'
+            ? 'Activité déjà réglée → fond orange dans Inscriptions, un avoir sera crédité.<br>'
+              + 'Cotisation remboursée <strong>moins ' + FRAIS_DOSSIER_SUPPRESSION + ' € de frais de dossier</strong> (non remboursables) ; '
+              + 'l\'adhésion de 15 € n\'est pas remboursée.'
             : 'Activité non réglée → suppression complète des lignes, le montant dû sera mis à jour.'}
           <br><strong>Cette action est irréversible.</strong>
         </div>

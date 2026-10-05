@@ -1351,6 +1351,70 @@ if (FRI_ENV === 'test') {
 }
 // ── Forfait country ≥2 créneaux (hors Initiation) ──
 // Déclarée en tête pour être disponible partout (calcTotals, buildRows, renderSummary)
+// ============================================================
+// PRORATA EN COURS DE SAISON (à partir du 1er janvier 2027)
+// Tarif d'activité × semaines d'activité restantes / 34, arrondi à l'euro supérieur.
+// Proratisés : activités et forfaits (Country, Marche nordique).
+// Non proratisés : adhésion FNSMR 15 €, licence FFTT.
+// ============================================================
+const PRORATA_DEBUT = '2027-01-01';
+const SAISON_PREMIERE_SEMAINE = '2026-09-14';   // lundi de la 1re semaine d'activité
+const SAISON_NB_SEMAINES = 34;
+// Vacances scolaires zone B (académie de Normandie), du samedi au dimanche inclus.
+// ⚠️ À vérifier chaque saison : une semaine dont le lundi tombe en vacances n'est pas comptée.
+const VACANCES_SCOLAIRES = [
+  ['2026-10-17', '2026-11-01'], // Toussaint
+  ['2026-12-19', '2027-01-03'], // Noël
+  ['2027-02-20', '2027-03-07'], // Hiver
+  ['2027-04-17', '2027-05-02'], // Printemps
+];
+
+function _dateLocale(iso) { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); }
+
+// Lundis des 34 semaines d'activité de la saison
+function semainesActivite() {
+  const vac = VACANCES_SCOLAIRES.map(([a, b]) => [_dateLocale(a), _dateLocale(b)]);
+  const semaines = [];
+  const lundi = _dateLocale(SAISON_PREMIERE_SEMAINE);
+  while (semaines.length < SAISON_NB_SEMAINES) {
+    if (!vac.some(([a, b]) => lundi >= a && lundi <= b)) semaines.push(new Date(lundi));
+    lundi.setDate(lundi.getDate() + 7);
+  }
+  return semaines;
+}
+
+// Date de référence (site de test : ?date=2027-02-10 pour simuler une date)
+function dateReferenceProrata(date) {
+  try { // la date simulée du site de test prime sur toutes les autres
+    const q = new URLSearchParams(location.search).get('date');
+    if (FRI_ENV === 'test' && q && /^\d{4}-\d{2}-\d{2}$/.test(q)) return _dateLocale(q);
+  } catch(e) {}
+  if (date) { const d = new Date(date); if (!isNaN(d.getTime())) return d; }
+  return new Date();
+}
+
+function infoProrata(date) {
+  const ref = dateReferenceProrata(date);
+  const jour = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate());
+  if (jour < _dateLocale(PRORATA_DEBUT)) return { actif: false, coef: 1 };
+  const restantes = semainesActivite().filter(l => l >= jour).length;
+  return { actif: true, restantes, total: SAISON_NB_SEMAINES, coef: restantes / SAISON_NB_SEMAINES };
+}
+
+// Applique le prorata à un tarif d'activité (jamais à l'adhésion ni à la licence FFTT)
+function prorata(prix, date) {
+  const p = infoProrata(date);
+  if (!p.actif || !prix) return prix;
+  return Math.ceil(prix * p.coef - 1e-9);
+}
+
+function bandeauProrataHtml(date) {
+  const p = infoProrata(date);
+  if (!p.actif) return '';
+  return '<div class="alert alert-info" style="margin:10px 0;"><span>📅 <strong>Inscription en cours de saison</strong> : les tarifs des activités sont calculés au prorata des '
+    + p.restantes + ' semaines restantes sur ' + p.total + ' (arrondi à l\'euro supérieur). L\'adhésion de 15 € et la licence FFTT ne sont pas proratisées.</span></div>';
+}
+
 function calcCountryForfait(membre, isno) {
   const CFIDS = ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'];
   const sel = (membre.activities || []).filter(id => CFIDS.includes(id));
@@ -2840,6 +2904,7 @@ function semainierHtml(memberId) {
         <div style="font-weight:700;font-size:14px;color:var(--dark);">${memberId === ID_SEMAINIER_CONSULTATION ? '📅 Semainier des activités' : '📅 Choisissez vos activités dans le semainier'}</div>
         <div style="font-size:11px;color:var(--gray);white-space:nowrap;">💡 Cliquez sur une ou plusieurs catégories pour afficher les créneaux</div>
       </div>
+      ${bandeauProrataHtml()}
       <div class="semainier-tabs" id="sem-tabs-${memberId}" style="display:block;">${tabsHtml}</div>
       <div id="sem-merged-${memberId}" style="display:none"></div>
       <div id="sem-grids-${memberId}">
@@ -3023,7 +3088,7 @@ function slotHtml(act, memberId, color, isno) {
     const [bg, fg] = act.color.split(':');
     color = { bg, fg };
   }
-  const price = isno ? act.isno : act.hc;
+  const price = prorata(isno ? act.isno : act.hc);
   const placeInfo = state.places[act.id];
   const isFull = placeInfo && placeInfo.available <= 0;
   const m = state.members.find(m => m.id === memberId);
@@ -3610,7 +3675,7 @@ function updateSelectedBadge(memberId) {
   el.innerHTML = m.activities.map(actId => {
     const act = getActById(actId);
     if (!act) return '';
-    const price = isno ? act.isno : act.hc;
+    const price = prorata(isno ? act.isno : act.hc);
     // For linked pairs, show as one combined badge
     if (act.linkedWith) {
       const pairKey = [actId, act.linkedWith].sort().join('|');
@@ -3713,7 +3778,7 @@ function updateMemberTotal(memberId) {
     let price = isno ? act.isno : act.hc;
     // Réduction femmes TT : -30€ (Isneauville ET hors commune)
     if (isTTActivity(actId) && m.sexe === 'F') { price = Math.max(0, price - 30); ttReduction += 30; }
-    total += price;
+    total += prorata(price);
   });
   const el = document.getElementById(`member-total-${memberId}`);
   if (el) {
@@ -4203,6 +4268,7 @@ function calcTotals() {
       const cF = calcCountryForfait(m, isno);
       const CFIDS = ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j','country-init-j'];
       if (cF.forfait && CFIDS.includes(actId)) price = (cF.ids[0] === actId) ? cF.prix : 0;
+      price = prorata(price);
       totalBeforeDiscount += price;
       // Forfait country : jamais éligible remise 15%
       const isCountryForfaitActive = cF.forfait && CFIDS.includes(actId);
@@ -4289,6 +4355,7 @@ function buildRows(reg) {
         const NON_REMISABLE = ['marche-nordic','country-init-a','country-init-j'];
         const isCountryForfaitLinked = cFl.forfait && ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'].includes(actId);
         const estElig = !_isWaiting && aRemise15 && !isCountryForfaitLinked && !NON_REMISABLE.includes(actId) && (!actId.startsWith('tt-') || isno) && (!actId.startsWith('ping') || isno);
+        price = prorata(price, reg.date);
         const tarifBrut = price;
         if (estElig) price = Math.round(price * 0.85 * 100) / 100;
 
@@ -4365,7 +4432,8 @@ function buildRows(reg) {
       const NON_REMISABLE2 = ['marche-nordic','country-init-a','country-init-j'];
       const isCountryForfait2 = cFl2.forfait && ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'].includes(actId);
       const estElig2 = !_isWaiting2 && aRemise15b && !isCountryForfait2 && !NON_REMISABLE2.includes(actId) && (!actId.startsWith('tt-') || isno) && (!actId.startsWith('ping') || isno);
-      const tarifBrut2 = price; // après forfait country
+      price = prorata(price, reg.date);
+      const tarifBrut2 = price; // après forfait country (et prorata)
       if (estElig2) price = Math.round(price * 0.85 * 100) / 100;
       rows.push({
         date: formatDateFRI(reg.date), id: String(reg.id), code_dossier: reg.code || '',
@@ -4453,7 +4521,7 @@ function renderSummary() {
         const nomClean = act.name.replace(/\n/g, ' — ');
         const _wlL = m.waitingList || [];
         const _isWaitingL = _wlL.includes(actId);
-        const price = isno ? act.isno : act.hc;
+        const price = prorata(isno ? act.isno : act.hc);
         const prixCellL = _isWaitingL
           ? '<span style="color:#ff9800;font-weight:600">⏳ En attente</span>'
           : price + '€';
@@ -4472,13 +4540,14 @@ function renderSummary() {
       const _isWaitingR = _wlR.includes(actId);
       let price = isno ? act.isno : act.hc;
       if (isTTActivity(actId) && m.sexe === 'F') price = Math.max(0, price - 30);
+      price = prorata(price);
       const cFrs = calcCountryForfait(m, isno);
       const CFIDSrs = ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j','country-init-j'];
       let prixLabel = _isWaitingR
         ? '<span style="color:#ff9800;font-weight:600">⏳ En attente</span>'
         : price + '€';
       if (!_isWaitingR && cFrs.forfait && CFIDSrs.includes(actId)) {
-        price = (cFrs.ids[0] === actId) ? cFrs.prix : 0;
+        price = (cFrs.ids[0] === actId) ? prorata(cFrs.prix) : 0;
         prixLabel = (cFrs.ids[0] === actId) ? price + '€ <small style="color:#1b5e20">(forfait)</small>' : '<span style="color:#999">inclus</span>';
       }
       const trStyleR = _isWaitingR ? ' style="opacity:0.7;background:#fff8e1"' : '';
@@ -4494,7 +4563,7 @@ function renderSummary() {
     return actsRows;
   }).join('');
 
-  document.getElementById('summary-container').innerHTML = `
+  document.getElementById('summary-container').innerHTML = bandeauProrataHtml() + `
     <div class="card">
       <div class="card-title">👤 Responsable légal</div>
       <div style="font-size:14px;line-height:2;color:var(--dark)">
@@ -10033,6 +10102,7 @@ function filtrerActivitesAjout(code) {
   liste.innerHTML = resultats.slice(0, 20).map(({ act, dispo }) => {
     let prix = isno ? act.isno : act.hc;
     if (isTTActivity(act.id) && membre?.sexe === 'F') prix = Math.max(0, prix - 30);
+    prix = prorata(prix);
     const placesBadge = dispo === 0
       ? ' <span style="background:#fdecea;color:#c0392b;border-radius:4px;padding:2px 7px;font-size:10px;">⚠️ Complet</span>'
       : dispo !== '?'
@@ -10073,6 +10143,7 @@ async function selectionnerActiviteAjout(code, actId) {
 
   let prix = isno ? act.isno : act.hc;
   if (isTTActivity(actId) && membre?.sexe === 'F') prix = Math.max(0, prix - 30);
+  prix = prorata(prix);
 
   const totalActsApres = existingActCount + 1;
   const aRemiseApres   = totalActsApres >= 3;

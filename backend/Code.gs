@@ -1122,6 +1122,17 @@ function doPost(e) {
             var verroProps = PropertiesService.getScriptProperties();
             var dejaTraite = verroProps.getProperty(verroKey);
 
+            var dossierPresent = false;
+            if (sheetInsc && sheetInsc.getLastRow() > 1) {
+              dossierPresent = dataCheck.some(function(rc) { return String(rc[19] || '').trim() === codeDossier; });
+            }
+            if (!dossierPresent) {
+              envoyerEmail(EMAIL_ADMIN, '[FRI] ALERTE — paiement HelloAsso reçu, dossier ' + codeDossier + ' absent de la feuille',
+                'Un paiement HelloAsso de ' + montantEur + ' € a été reçu pour le dossier ' + codeDossier
+                + ' (payeur : ' + emailPayer + '), mais aucune ligne de ce dossier n\'existe dans l\'onglet Inscriptions.\n\n'
+                + 'Contactez la famille pour qu\'elle refasse son inscription (sans payer à nouveau), ou utilisez « Récupérer dossiers » dans la console admin.\n\n'
+                + 'Détail HelloAsso :\n' + JSON.stringify(haData, null, 2).substring(0, 4000), { name: 'FRI Admin' });
+            }
             if (dejaValide && !dejaTraite && checkoutId) {
               // Complément (ex. activité ajoutée) payé sur un dossier déjà réglé :
               // on l'enregistre dans l'onglet HelloAsso sans toucher au statut du dossier.
@@ -1179,7 +1190,7 @@ function doPost(e) {
     if(payload.action==='addRegistration'&&payload.rows&&payload.rows.length>0){
       if(payload.cheques&&payload.rows[0])payload.rows[0].cheques=payload.cheques;
       var result=addRegistration(payload.rows,payload.status||'paid',payload);
-      return ContentService.createTextOutput(JSON.stringify({status:'ok',inserted:result.inserted})).setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify(reponseAddRegistration(result))).setMimeType(ContentService.MimeType.JSON);
     }
     if(payload.action==='ajouterActiviteDossier'){
       if(!verifierTokenAdmin(payload._adminToken))return ContentService.createTextOutput(JSON.stringify(REPONSE_ADMIN_REQUISE)).setMimeType(ContentService.MimeType.JSON);
@@ -1968,7 +1979,7 @@ function traiterRequete(e) {
       if(!payload.rows||payload.rows.length===0)return repondreAvecCb({status:'error',message:'Aucune donnee'},null,null,callback);
       if(payload.cheques&&payload.rows[0])payload.rows[0].cheques=payload.cheques;
       var result=addRegistration(payload.rows,payload.status||'paid',payload);
-      return repondreAvecCb({status:'ok',inserted:result.inserted},null,null,callback);
+      return repondreAvecCb(reponseAddRegistration(result),null,null,callback);
     }
     if(payload.action==='getDossiers'){
       var result=getDossiersSheet();
@@ -3100,17 +3111,26 @@ function envoyerMessageContactGAS(p) {
   return {status:'ok'};
 }
 
+// Réponse renvoyée au site après addRegistration : « ok » seulement si les lignes sont écrites
+// (ou déjà présentes pour cette famille), sinon une erreur que le site sait traiter.
+function reponseAddRegistration(result) {
+  result = result || {};
+  if (result.codePris) return { status: 'error', code: 'CODE_PRIS', message: result.error };
+  if (result.error)    return { status: 'error', code: 'OCCUPE', message: result.error };
+  return { status: 'ok', inserted: result.inserted || 0, doublon: !!result.doublon };
+}
+
 function addRegistration(rows, paymentStatus, payload) {
   if(!rows||rows.length===0)return{inserted:0};
   rows = nettoyerTexteSaisi(rows);
 
   // ── Verrou anti-concurrence pour les inscriptions simultanées ──
   var lock = LockService.getScriptLock();
-  try {
-    lock.waitLock(15000); // Attendre jusqu'à 15s si une autre inscription est en cours
-  } catch(eLock) {
-    Logger.log('addRegistration: verrou indisponible — ' + eLock);
-    return { inserted: 0, error: 'Verrou indisponible, réessayez' };
+  // Forum des associations : beaucoup d'inscriptions simultanées → attente jusqu'à 30 s ;
+  // en cas d'échec une vraie erreur est renvoyée (le site réessaie) au lieu d'un « ok » sans écriture.
+  if (!lock.tryLock(30000)) {
+    Logger.log('addRegistration: verrou indisponible après 30 s — code ' + (rows[0] && rows[0].code_dossier));
+    return { inserted: 0, error: 'Serveur occupé, nouvel essai en cours…' };
   }
 
   try {
@@ -3127,6 +3147,13 @@ function addRegistration(rows, paymentStatus, payload) {
         var colCodes = sheetCheck.getRange(2, 20, sheetCheck.getLastRow() - 1, 1).getValues();
         for (var dc = 0; dc < colCodes.length; dc++) {
           if (String(colCodes[dc][0] || '').trim() === codeDossier) {
+            // Même code : vrai doublon (même famille, nouvel envoi) ou numéro déjà attribué à une autre famille ?
+            var emailExistant = String(sheetCheck.getRange(dc + 2, 16).getValue() || '').trim().toLowerCase();
+            var emailNouveau  = String(rows[0].email1 || '').trim().toLowerCase();
+            if (emailExistant && emailNouveau && emailExistant !== emailNouveau) {
+              Logger.log('⚠️ addRegistration — code ' + codeDossier + ' déjà pris par une autre famille');
+              return { inserted: 0, codePris: true, error: 'Numéro de dossier déjà utilisé' };
+            }
             Logger.log('⚠️ addRegistration — doublon détecté pour ' + codeDossier + ' → insertion ignorée');
             return { inserted: 0, doublon: true };
           }

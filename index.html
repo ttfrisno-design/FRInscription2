@@ -4684,25 +4684,9 @@ async function nettoyerFichiersOrphelins(code) {
   window._friQSSigné = false;
   window._friRISigné = false;
 
-  // pagehide fonctionne sur iOS Safari, beforeunload non
-  window.addEventListener('pagehide', function() {
-    const code = localStorage.getItem('fri_code_session');
-    // Si un code existe et que le dossier n'a pas été enregistré → signaler l'abandon
-    const pendingKeys = Object.keys(JSON.parse(localStorage.getItem('fri_pending') || '{}'));
-    const isEnregistré = !pendingKeys.includes(code) && !code;
-    if (code && !isEnregistré) {
-      // Utiliser sendBeacon pour envoyer même lors de la fermeture
-      const url = localStorage.getItem('fri_apps_script_url') || '';
-      if (url) {
-        const payload = JSON.stringify({
-          action: 'supprimerFichiersOrphelins',
-          _token: FRI_SECRET_TOKEN,
-          code: code
-        });
-        navigator.sendBeacon(url + '?callback=_abandon&payload=' + encodeURIComponent(payload));
-      }
-    }
-  });
+  // (L'effacement automatique des QS / RI « orphelins » en quittant la page a été supprimé :
+  //  il pouvait effacer les documents d'un dossier dont l'enregistrement était en cours
+  //  ou avait échoué, notamment au passage vers HelloAsso.)
 })();
 
 function checkRgpdConsent() {
@@ -5568,6 +5552,29 @@ async function lancerCheckoutHA(code, total, echelonne) {
     const reg = pending[code] || {};
     const resp = reg.responsable || {};
 
+    // Enregistrer le dossier et les documents AVANT la redirection vers HelloAsso :
+    // si la famille ne revient pas sur le site après avoir payé (onglet fermé, autre appareil…),
+    // rien n'est perdu. Le paiement reçu est ensuite rattaché au dossier par le webhook HelloAsso.
+    if (btn) btn.textContent = '⏳ Enregistrement de votre dossier...';
+    reg.responsable = reg.responsable || {};
+    reg.responsable.modePaiement = echelonne ? 'helloasso3x' : 'helloasso';
+    reg.status = 'pending_manual';
+    const dossierOk = await sendToGoogleSheets(reg);
+    if (!dossierOk) {
+      if (btn) { btn.disabled = false; btn.textContent = '💳 Réessayer'; }
+      if (btn3x) btn3x.disabled = false;
+      showToast('⚠️ Votre dossier n\'a pas pu être enregistré (serveur saturé). Patientez quelques secondes puis réessayez : vous n\'avez rien payé.', 'red', 9000);
+      return;
+    }
+    code = reg.code || code;  // le serveur a pu attribuer un nouveau numéro (numéro déjà pris)
+    if (btn) btn.textContent = '⏳ Envoi des documents...';
+    const docsKO = await envoyerDocumentsDossier(code, reg);
+    // Libérer le numéro de dossier : sur un appareil partagé (stand du forum), la famille suivante
+    // recevait sinon le même numéro et son dossier était écarté comme « doublon ».
+    clearCodeSession();
+    if (docsKO.length) showToast('⚠️ Non transmis : ' + docsKO.join(', ') + '. Vous pourrez les renvoyer depuis « Envoyer des documents ».', 'orange', 8000);
+    if (btn) btn.textContent = '⏳ Ouverture de HelloAsso...';
+
     const currentUrl = window.location.href.split('#')[0];
 
     const result = await callAppsScriptFetch(url, {
@@ -5600,7 +5607,7 @@ async function lancerCheckoutHA(code, total, echelonne) {
       if (regLight.riSignature) delete regLight.riSignature.signature; // signature base64
       pendingHA[code] = { total, timestamp: Date.now(), echelonne: !!echelonne, reg: regLight };
       localStorage.setItem('fri_pending_ha', JSON.stringify(pendingHA));
-      // Rediriger vers HA — l'inscription sera enregistrée AU RETOUR
+      // Rediriger vers HA — dossier et documents déjà enregistrés
       window.location.href = data.redirectUrl;
     } else {
       const errMsg = (data && data.message) ? data.message : 'Réponse inattendue du serveur';
@@ -5695,64 +5702,10 @@ async function handleReturnFromHelloAsso() {
       await sendToGoogleSheets(reg);
       console.log('[FRI] Dossier enregistré dans le Sheet');
 
-      // ── Envoyer QS et RI au Drive (depuis localStorage, navigation HA efface state) ──
-      const gasUrlHA = getAppsScriptUrl();
-      const qsPendingHA = JSON.parse(localStorage.getItem('fri_qs_pending') || '[]');
-      if (gasUrlHA && qsPendingHA.length > 0) {
-        for (const qsItem of qsPendingHA) {
-          try {
-            // Récupérer le base64 depuis state.members (pas stocké dans fri_qs_pending)
-            const mbState = state.members && state.members.find(m =>
-              m.id === qsItem.memberId ||
-              (m.prenom === qsItem.prenom && m.nom === qsItem.nom)
-            );
-            const pdfB64HA = (mbState && mbState.qsPdfBase64) || qsItem.pdfBase64 || null;
-            if (!pdfB64HA) { console.warn('[FRI] QS base64 introuvable pour', qsItem.prenom); continue; }
-            var isMinQS = false;
-            if (qsItem.ddn) {
-              var dobQS = new Date(qsItem.ddn.split('/').reverse().join('-'));
-              var ageQS = new Date().getFullYear() - dobQS.getFullYear();
-              var moQS = new Date().getMonth() - dobQS.getMonth();
-              if (moQS < 0 || (moQS === 0 && new Date().getDate() < dobQS.getDate())) ageQS--;
-              isMinQS = ageQS < 18;
-            }
-            await envoyerPDFParEmail(
-              qsItem.filename, pdfB64HA,
-              qsItem.prenom + ' ' + qsItem.nom,
-              (reg.responsable?.prenom||'') + ' ' + (reg.responsable?.nom||''),
-              qsItem.email || reg.responsable?.email1 || '',
-              isMinQS
-            );
-            console.log('[FRI] QS envoyé Drive (retour HA):', qsItem.prenom);
-          } catch(eQSHA) { console.warn('Envoi QS HA KO:', eQSHA); }
-        }
-        localStorage.removeItem('fri_qs_pending');
+      // Documents : déjà envoyés avant le paiement ; nouvel essai seulement s'il en manquait
+      if (localStorage.getItem('fri_docs_envoyes_' + code) !== '1') {
+        try { await envoyerDocumentsDossier(code, reg); } catch(eDocs) { console.warn('Docs retour HA KO:', eDocs); }
       }
-      const riPendingHA = JSON.parse(localStorage.getItem('fri_ri_pending') || 'null');
-      if (gasUrlHA && riPendingHA && riPendingHA.signature) {
-        try {
-          const riPHA = JSON.stringify({
-            action: 'saveReglement', _token: FRI_SECRET_TOKEN,
-            code: riPendingHA.code || code, nom: riPendingHA.nom,
-            prenom: riPendingHA.prenom, email: riPendingHA.email,
-            date: riPendingHA.date, signature: riPendingHA.signature
-          });
-          const ifrHA = document.createElement('iframe');
-          ifrHA.name = 'fri_ri_ha_' + Date.now(); ifrHA.style.display='none';
-          document.body.appendChild(ifrHA);
-          const frmHA = document.createElement('form');
-          frmHA.method='POST'; frmHA.action=gasUrlHA; frmHA.target=ifrHA.name; frmHA.style.display='none';
-          const inpHA = document.createElement('input');
-          inpHA.type='hidden'; inpHA.name='payload'; inpHA.value=riPHA;
-          frmHA.appendChild(inpHA); document.body.appendChild(frmHA); frmHA.submit();
-          await new Promise(r => setTimeout(r, 6000));
-          try{document.body.removeChild(frmHA);}catch(e){}
-          try{document.body.removeChild(ifrHA);}catch(e){}
-          localStorage.removeItem('fri_ri_pending');
-          console.log('[FRI] RI envoyé Drive (retour HA)');
-        } catch(eRIHA) { console.warn('Envoi RI HA KO:', eRIHA); }
-      }
-
       // Petite pause pour laisser Apps Script finir l'écriture
       await new Promise(r => setTimeout(r, 2000));
     }
@@ -5879,7 +5832,6 @@ async function finaliserInscription(code) {
     reg.dateDossier = formatDateFRI();
 
     delete pending[code];
-    clearCodeSession(); // Libérer le code session après enregistrement
     localStorage.setItem('fri_pending', JSON.stringify(pending));
     // fri_registrations : stocker sans les PDF base64
     const regForStorage = JSON.parse(JSON.stringify(reg));
@@ -5893,85 +5845,23 @@ async function finaliserInscription(code) {
     state.registrations = existing;
 
     console.log('[FRI] reg.cheques au moment envoi:', JSON.stringify(reg.cheques));
-    await sendToGoogleSheets(reg);
-
-    // ── Envoyer QS et RI au Drive maintenant que le dossier est enregistré ──
-    const regCode = code || reg.code || '';
-    const gasUrl = getAppsScriptUrl();
-
-    // Envoyer les QS — depuis state.members ET depuis localStorage (retour HA)
-    const qsPendingLS = JSON.parse(localStorage.getItem('fri_qs_pending') || '[]');
-    const qsMembersToSend = [];
-    // D'abord les membres de state
-    if (state.members) {
-      for (const mb of state.members) {
-        if (mb.qsPdfBase64 && mb.qsPdfFilename) {
-          qsMembersToSend.push({
-            filename: mb.qsPdfFilename, pdfBase64: mb.qsPdfBase64,
-            prenom: mb.prenom, nom: mb.nom, ddn: mb.ddn,
-            email: state.responsable?.email1 || ''
-          });
-        }
-      }
-    }
-    // Ajouter ceux du localStorage non déjà présents
-    for (const qsLS of qsPendingLS) {
-      if (!qsMembersToSend.find(m => m.filename === qsLS.filename)) {
-        qsMembersToSend.push(qsLS);
-      }
-    }
-    if (gasUrl) {
-      for (const qsItem of qsMembersToSend) {
-        try {
-          await envoyerPDFParEmail(
-            qsItem.filename, qsItem.pdfBase64,
-            qsItem.prenom + ' ' + qsItem.nom,
-            (state.responsable?.prenom||'') + ' ' + (state.responsable?.nom||''),
-            qsItem.email || state.responsable?.email1 || '',
-            getAge(qsItem.ddn) < 18
-          );
-          console.log('[FRI] QS envoyé au Drive pour', qsItem.prenom);
-        } catch(eQS) { console.warn('Envoi QS Drive KO:', eQS); }
-      }
-      // Nettoyer le localStorage QS
-      localStorage.removeItem('fri_qs_pending');
+    const envoiOk = await sendToGoogleSheets(reg);
+    if (!envoiOk) {
+      // Ne rien perdre : le dossier reste en attente sur cet appareil et dans la file de renvoi
+      pending[code] = reg;
+      try { localStorage.setItem('fri_pending', JSON.stringify(pending)); } catch(e) {}
+      removeOverlay();
+      alert('⚠️ Votre dossier ' + code + ' n\'a pas pu être enregistré : le serveur est momentanément saturé.\n\n'
+        + 'Patientez une minute puis cliquez à nouveau sur le bouton de validation. '
+        + 'Si le problème persiste, notez votre code dossier et contactez le Foyer Rural.');
+      return;
     }
 
-    // Envoyer le RI — depuis state.riSignature ET depuis localStorage (retour HA)
-    const riPendingLS = JSON.parse(localStorage.getItem('fri_ri_pending') || 'null');
-    const riToSend = state.riSignature || riPendingLS;
-    if (gasUrl && riToSend) {
-      try {
-        const riPayload = JSON.stringify({
-          action: 'saveReglement', _token: FRI_SECRET_TOKEN,
-          code:      riToSend.code || regCode,
-          nom:       riToSend.nom,
-          prenom:    riToSend.prenom,
-          email:     riToSend.email,
-          date:      riToSend.date,
-          signature: riToSend.signature
-        });
-        const iframeRI = document.createElement('iframe');
-        iframeRI.name = 'fri_ri_final_' + Date.now();
-        iframeRI.style.display = 'none';
-        document.body.appendChild(iframeRI);
-        const formRI = document.createElement('form');
-        formRI.method = 'POST'; formRI.action = gasUrl;
-        formRI.target = iframeRI.name; formRI.style.display = 'none';
-        const inputRI = document.createElement('input');
-        inputRI.type = 'hidden'; inputRI.name = 'payload'; inputRI.value = riPayload;
-        formRI.appendChild(inputRI);
-        document.body.appendChild(formRI);
-        formRI.submit();
-        setTimeout(() => {
-          try { document.body.removeChild(formRI); } catch(e) {}
-          try { document.body.removeChild(iframeRI); } catch(e) {}
-          console.log('[FRI] RI envoyé au Drive ✅');
-          state.riSignature = null;
-          localStorage.removeItem('fri_ri_pending');
-        }, 10000);
-      } catch(eRI) { console.warn('Envoi RI Drive KO:', eRI); }
-    }
+    // ── Envoyer QS et RI maintenant que le dossier est enregistré (envois vérifiés) ──
+    code = reg.code || code;  // nouveau numéro éventuel
+    clearCodeSession(); // Libérer le code session après enregistrement confirmé
+    const docsKO = await envoyerDocumentsDossier(code, reg);
+    if (docsKO.length) showToast('⚠️ Non transmis : ' + docsKO.join(', ') + '. Renvoyez-les depuis « Envoyer des documents » avec votre code ' + code + '.', 'orange', 10000);
 
     removeOverlay();
 
@@ -6396,6 +6286,83 @@ function callAppsScriptValidate(url, code) {
   });
 }
 
+// ============================================================
+// ENVOI FIABLE AU SERVEUR
+// POST réel (le corps n'a pas de limite de taille, contrairement à l'adresse d'un GET),
+// réponse lue et vérifiée, nouvelles tentatives espacées si le serveur est saturé
+// (forum des associations : des dizaines d'inscriptions en même temps).
+// ============================================================
+async function envoyerAuServeur(payload, tentatives) {
+  const url = getAppsScriptUrl();
+  if (!url) throw new Error('Serveur non configuré');
+  const pauses = [0, 2000, 5000, 10000, 20000];
+  let derniereErreur = null;
+  for (let i = 0; i < (tentatives || 4); i++) {
+    if (pauses[i]) await new Promise(r => setTimeout(r, pauses[i] + Math.random() * 1500));
+    try {
+      await initDynamicToken();                       // jeton frais à chaque tentative
+      const corps = Object.assign({}, payload, { _token: FRI_SECRET_TOKEN });
+      const resp = await Promise.race([
+        fetch(url, { method: 'POST', redirect: 'follow', body: JSON.stringify(corps) }), // text/plain : pas de pré-requête CORS
+        new Promise((_, rej) => setTimeout(() => rej(new Error('délai dépassé')), 90000))
+      ]);
+      const texte = await resp.text();
+      let data = null;
+      try { data = JSON.parse(texte); } catch(e) { throw new Error('réponse illisible du serveur'); }
+      if (data && data.status === 'ok') return data;
+      derniereErreur = new Error((data && data.message) || 'refus du serveur');
+      derniereErreur.data = data;
+      if (data && data.code === 'CODE_PRIS') throw derniereErreur;   // inutile de réessayer à l'identique
+      if (data && /token|autoris/i.test(data.message || '')) { FRI_SECRET_TOKEN = ''; _tokenExpires = 0; }
+    } catch(e) {
+      derniereErreur = e;
+      if (e && e.data && e.data.code === 'CODE_PRIS') throw e;
+    }
+    console.warn('[FRI] envoi ' + payload.action + ' — tentative ' + (i + 1) + ' KO :', derniereErreur && derniereErreur.message);
+  }
+  throw derniereErreur || new Error('Envoi impossible');
+}
+
+// Envoie le(s) questionnaire(s) de santé et le règlement intérieur d'un dossier.
+// Renvoie la liste des documents qui n'ont pas pu être envoyés.
+async function envoyerDocumentsDossier(code, reg) {
+  const echecs = [];
+  const resp = (reg && reg.responsable) || state.responsable || {};
+  const qsListe = [];
+  (state.members || []).forEach(mb => {
+    if (mb.qsPdfBase64 && mb.qsPdfFilename) qsListe.push({ filename: mb.qsPdfFilename, pdfBase64: mb.qsPdfBase64, prenom: mb.prenom, nom: mb.nom, ddn: mb.ddn });
+  });
+  ((reg && reg.members) || []).forEach(mb => {
+    if (mb.qsPdfBase64 && mb.qsPdfFilename && !qsListe.find(q => q.filename === mb.qsPdfFilename))
+      qsListe.push({ filename: mb.qsPdfFilename, pdfBase64: mb.qsPdfBase64, prenom: mb.prenom, nom: mb.nom, ddn: mb.ddn });
+  });
+  for (const qs of qsListe) {
+    try {
+      await envoyerAuServeur({
+        action: 'envoyerAttestationPDF', filename: qs.filename,
+        membre: qs.prenom + ' ' + qs.nom, responsable: (resp.prenom || '') + ' ' + (resp.nom || ''),
+        email: resp.email1 || '', isMineur: getAge(qs.ddn) < 18, pdfBase64: qs.pdfBase64, dossierOverride: ''
+      });
+      console.log('[FRI] QS envoyé :', qs.filename);
+    } catch(e) { echecs.push('Questionnaire santé de ' + qs.prenom); }
+  }
+  if (qsListe.length) { try { localStorage.removeItem('fri_qs_pending'); } catch(e) {} }
+
+  let ri = state.riSignature;
+  if (!ri) { try { ri = JSON.parse(localStorage.getItem('fri_ri_pending') || 'null'); } catch(e) {} }
+  if (ri && ri.signature) {
+    try {
+      await envoyerAuServeur({ action: 'saveReglement', code: code || ri.code, nom: ri.nom, prenom: ri.prenom,
+        email: ri.email, date: ri.date, signature: ri.signature });
+      state.riSignature = null;
+      try { localStorage.removeItem('fri_ri_pending'); } catch(e) {}
+      console.log('[FRI] RI envoyé');
+    } catch(e) { echecs.push('Règlement intérieur'); }
+  }
+  try { localStorage.setItem('fri_docs_envoyes_' + code, echecs.length ? '' : '1'); } catch(e) {}
+  return echecs;
+}
+
 async function sendToGoogleSheets(reg) {
   const url = getAppsScriptUrl();
   if (!url || url === 'VOTRE_URL_APPS_SCRIPT_ICI') {
@@ -6429,43 +6396,28 @@ async function sendToGoogleSheets(reg) {
     console.log('[FRI] sendToGoogleSheets payload size:', payloadSize);
 
     let result;
-    // Toujours utiliser callAppsScriptFetch (POST fetch) — plus fiable que JSONP ou iframe
-    // pour les gros payloads et les inscriptions multiples simultanées
     try {
-      const fetchResult = await callAppsScriptFetch(url, {
-        ...payloadObj,
-        _token: FRI_SECRET_TOKEN
-      });
-      const fd = fetchResult && fetchResult.data ? fetchResult.data : fetchResult;
-      if (fd && (fd.status === 'ok' || fd.status === 'added' || fd.added > 0)) {
-        result = { ok: true };
-      } else if (payloadSize > 6000) {
-        // Fallback iframe POST si fetch échoue et payload trop grand pour JSONP
-        console.log('[FRI] Fallback iframe POST (' + payloadSize + ' bytes)');
-        await new Promise(function(resolvePost) {
-          const iframe = document.createElement('iframe');
-          iframe.name = 'fri_reg_' + Date.now();
-          iframe.style.display = 'none';
-          document.body.appendChild(iframe);
-          const form = document.createElement('form');
-          form.method = 'POST'; form.action = url;
-          form.target = iframe.name; form.style.display = 'none';
-          const input = document.createElement('input');
-          input.type = 'hidden'; input.name = 'payload'; input.value = payloadStr;
-          form.appendChild(input); document.body.appendChild(form); form.submit();
-          setTimeout(function() {
-            try{document.body.removeChild(form);}catch(e){}
-            try{document.body.removeChild(iframe);}catch(e){}
-            resolvePost();
-          }, 10000);
-        });
-        result = { ok: true };
-      } else {
-        result = await callAppsScript(payloadObj);
+      let fd;
+      try {
+        fd = await envoyerAuServeur(payloadObj, 5);
+      } catch(eCode) {
+        if (!(eCode.data && eCode.data.code === 'CODE_PRIS')) throw eCode;
+        // Ce numéro de dossier appartient déjà à une autre famille : nouveau numéro, nouvel envoi
+        const ancien = reg.code;
+        try { localStorage.removeItem('fri_code_session'); } catch(e) {}
+        reg.code = generateDossierCode();
+        try {
+          const p = JSON.parse(localStorage.getItem('fri_pending') || '{}');
+          if (p[ancien]) { p[reg.code] = Object.assign(p[ancien], { code: reg.code }); delete p[ancien]; localStorage.setItem('fri_pending', JSON.stringify(p)); }
+        } catch(e) {}
+        console.warn('[FRI] Code ' + ancien + ' déjà utilisé → nouveau code ' + reg.code);
+        payloadObj.rows = buildRows(reg);
+        fd = await envoyerAuServeur(payloadObj, 5);
       }
-    } catch(eFetch) {
-      console.warn('[FRI] callAppsScriptFetch KO, fallback JSONP:', eFetch.message);
-      result = await callAppsScript(payloadObj);
+      // inserted > 0 : lignes écrites ; doublon : déjà enregistré par cette famille (nouvel envoi après une coupure)
+      result = (fd.inserted > 0 || fd.doublon) ? { ok: true } : { ok: false, reason: fd.message || 'aucune ligne écrite' };
+    } catch(eEnvoi) {
+      result = { ok: false, reason: eEnvoi.message };
     }
     if (result.ok) {
       dequeueRetry(reg.id);
@@ -7222,9 +7174,14 @@ async function _lancerReenvoi() {
 
 
 function queueForRetry(reg) {
-  const q = JSON.parse(localStorage.getItem('fri_retry_queue') || '[]');
-  if (!q.find(r => r.id === reg.id)) q.push(reg);
-  localStorage.setItem('fri_retry_queue', JSON.stringify(q));
+  try {
+    const leger = JSON.parse(JSON.stringify(reg));
+    (leger.members || []).forEach(m => { delete m.qsPdfBase64; delete m.signatureDataUrl; });
+    if (leger.riSignature) delete leger.riSignature.signature;
+    const q = JSON.parse(localStorage.getItem('fri_retry_queue') || '[]');
+    if (!q.find(r => r.id === leger.id)) q.push(leger);
+    localStorage.setItem('fri_retry_queue', JSON.stringify(q));
+  } catch(e) { console.warn('[FRI] file d\'attente KO :', e); }
 }
 function dequeueRetry(id) {
   const q = JSON.parse(localStorage.getItem('fri_retry_queue') || '[]');
@@ -10783,6 +10740,7 @@ function exportSingleExcel(id) {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => addMember());
   else addMember();
   initDynamicToken().catch(e => console.warn('[FRI] initDynamicToken:', e));
+  setTimeout(() => { retryQueue().then(n => { if (n) console.log('[FRI] ' + n + ' dossier(s) en attente renvoyé(s)'); }).catch(() => {}); }, 4000);
   // Load places availability before rendering
   // Charger les places avec un léger délai pour laisser le DOM se stabiliser
   // Puis re-rendre la section active pour mettre à jour les badges de places

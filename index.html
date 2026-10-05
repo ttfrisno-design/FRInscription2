@@ -3922,6 +3922,11 @@ function renderHealth() {
           onchange="onCertifMembreSelected(${m.id})"
           style="font-size:12px;width:100%;box-sizing:border-box;margin-bottom:6px;">
         <div id="certif-status-${m.id}" style="font-size:12px;min-height:16px;"></div>
+        <label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#555;margin-top:6px;cursor:pointer;">
+          <input type="checkbox" id="certif-plus-tard-${m.id}" ${m.certifPlusTard ? 'checked' : ''} onchange="onCertifPlusTard(${m.id}, this.checked)" style="margin-top:2px;">
+          <span>Je transmettrai le certificat médical plus tard (menu « Envoyer des documents » ou par email au FRI).
+          L'inscription ne sera validée qu'à sa réception.</span>
+        </label>
       </div>`;
 
     return `<div class="qs-block">
@@ -4017,10 +4022,15 @@ function updateQS(memberId) {
     res.textContent = '⏳ Veuillez répondre à toutes les questions.';
     m.qsResult = null;
   } else if (hasOui) {
+    // Au moins un OUI : aucune attestation possible → certificat médical obligatoire
     res.className = 'qs-result qs-ko';
-    res.innerHTML = '⚠️ Au moins une réponse OUI — Certificat médical requis. Consultez votre médecin.'
-      + '<br><button onclick="genererAttestationPDF(' + memberId + ')" style="margin-top:8px;background:#f57c00;color:white;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;">✍️ Signer et Télécharger le questionnaire PDF</button>';
+    res.innerHTML = '⚠️ Au moins une réponse <strong>OUI</strong> : l\'attestation de santé ne peut pas être signée.<br>'
+      + '<strong>Un certificat médical de non contre-indication</strong> (moins d\'un an) est obligatoire : '
+      + 'transmettez-le ci-dessous, ou cochez « je le transmettrai plus tard ».';
     m.qsResult = 'certificat_requis';
+    m.qsPdfBase64 = null; m.qsPdfFilename = null;   // une éventuelle attestation précédente n'est plus valable
+    const bloc = document.getElementById('certif-bloc-' + memberId);
+    if (bloc) { bloc.style.borderColor = '#c62828'; bloc.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
   } else {
     res.className = 'qs-result qs-ok';
     res.innerHTML = '⚠️ Toutes réponses NON — <strong>Veuillez maintenant signer et envoyer l\'attestation au FRI.</strong>'
@@ -4032,6 +4042,47 @@ function updateQS(memberId) {
 
 // Vérifie si tous les membres ont leur QS ou certificat validé
 // et active/désactive le bouton "Continuer → Récapitulatif"
+// Certificat médical choisi par la famille : envoi immédiat au FRI (dossier Drive « 1-Certificats médicaux »)
+async function onCertifMembreSelected(memberId) {
+  const m = state.members.find(mb => mb.id === memberId);
+  const input = document.getElementById('certif-input-' + memberId);
+  const statut = document.getElementById('certif-status-' + memberId);
+  const fichier = input && input.files && input.files[0];
+  if (!m || !fichier) return;
+  const dire = (txt, couleur) => { if (statut) { statut.textContent = txt; statut.style.color = couleur || '#555'; } };
+  if (fichier.size > 5 * 1024 * 1024) { dire('❌ Fichier trop lourd (5 Mo maximum).', '#c62828'); input.value = ''; return; }
+  dire('⏳ Envoi du certificat…');
+  try {
+    const base64 = await new Promise((resolve, reject) => {
+      const lecteur = new FileReader();
+      lecteur.onload = () => resolve(String(lecteur.result).split(',')[1] || '');
+      lecteur.onerror = () => reject(new Error('lecture du fichier impossible'));
+      lecteur.readAsDataURL(fichier);
+    });
+    const code = generateDossierCode();
+    const ext = (fichier.name.match(/\.[a-z0-9]+$/i) || ['.pdf'])[0];
+    await envoyerAuServeur({
+      action: 'uploadCertificatMedical', code: code, nom: m.nom || '', prenom: m.prenom || '',
+      filename: code + '_' + (m.prenom || '') + '-' + (m.nom || '') + '_Certificat-medical' + ext,
+      mimeType: fichier.type || 'application/octet-stream', fileBase64: base64
+    });
+    m.certifMedEnvoye = true;
+    if (m.qsResult !== 'attestation_ok') m.qsResult = 'certificat_requis';
+    dire('✅ Certificat médical transmis au FRI.', '#2d6a4f');
+  } catch(e) {
+    dire('❌ Envoi impossible (' + e.message + '). Réessayez ou cochez « je le transmettrai plus tard ».', '#c62828');
+  }
+  checkHealthContinuerBtn();
+}
+
+function onCertifPlusTard(memberId, coche) {
+  const m = state.members.find(mb => mb.id === memberId);
+  if (!m) return;
+  m.certifPlusTard = !!coche;
+  if (coche && m.qsResult !== 'attestation_ok') m.qsResult = m.qsResult || 'certificat_requis';
+  checkHealthContinuerBtn();
+}
+
 function checkHealthContinuerBtn() {
   const btn = document.getElementById('btn-next-step3');
   if (!btn) return;
@@ -4042,7 +4093,7 @@ function checkHealthContinuerBtn() {
     if (!membreNecessiteQS(m)) return true; // activité non-sportive → pas de QS requis
     if (m.qsResult === 'no_qs_needed') return true;
     if (m.qsResult === 'attestation_ok') return true;
-    if (m.qsResult === 'certificat_requis' && m.certifMedEnvoye) return true;
+    if (m.qsResult === 'certificat_requis' && (m.certifMedEnvoye || m.certifPlusTard)) return true;
     return false;
   });
   if (allOk) {
@@ -4402,7 +4453,7 @@ function buildRows(reg) {
           ancv_montant: reg.responsable.ancvMontant || 0,
           fftt_price: (m.ffttWant && m.ffttPrice) ? Number(m.ffttPrice) : 0,
           qs_sante: m.qsResult === 'attestation_ok' ? 'Attestation OK'
-                  : m.qsResult === 'certificat_requis' ? 'Certificat requis'
+                  : m.qsResult === 'certificat_requis' ? (m.certifMedEnvoye ? 'Certificat transmis' : 'Certificat requis')
                   : m.qsResult === 'no_qs_needed' ? 'Pas de QS (activité non sportive)'
                   : m.qsResult === 'qs_answers_ok' ? 'Non signé' : 'Non rempli',
           pass_aide: (function(){
@@ -4476,7 +4527,7 @@ function buildRows(reg) {
         atout_code:          reg.responsable.atoutCode || '',
         fftt_price: (m.ffttWant && m.ffttPrice) ? Number(m.ffttPrice) : 0,
         qs_sante: m.qsResult === 'attestation_ok' ? 'Attestation OK'
-                : m.qsResult === 'certificat_requis' ? 'Certificat requis'
+                : m.qsResult === 'certificat_requis' ? (m.certifMedEnvoye ? 'Certificat transmis' : 'Certificat requis')
                 : m.qsResult === 'no_qs_needed' ? 'Pas de QS (activité non sportive)' : 'Non rempli',
         pass_aide: (function(){
             const parts = [];
@@ -4992,6 +5043,21 @@ function genererAttestationPDF(memberId) {
 }
 
 async function _genererPDFAvecSignature(memberId, signatureDataUrl) {
+  // Garde-fou : une seule réponse OUI (ou non renseignée) interdit l'attestation
+  const _mQS = (state.members || []).find(mb => mb.id === memberId);
+  if (_mQS) {
+    const _rep = Array.isArray(_mQS.qs) ? _mQS.qs : Object.values(_mQS.qs || {});
+    const _nbQ = (getAge(_mQS.ddn) < 18 ? QS_MINEURS : QS_ADULTS).length;
+    const _repondues = _rep.filter(v => v === 'oui' || v === 'non').length;
+    if (_rep.some(v => v === 'oui')) {
+      showToast('⚠️ Une réponse OUI : pas d\'attestation possible, un certificat médical est obligatoire.', 'red', 7000);
+      return;
+    }
+    if (_repondues < _nbQ && String(memberId).indexOf('doc_') !== 0) {
+      showToast('⚠️ Répondez à toutes les questions avant de signer.', 'red', 5000);
+      return;
+    }
+  }
   try {
   // Lire nom/prénom depuis le DOM pour s'assurer d'avoir les valeurs saisies
   state.members.forEach(mb => {
@@ -5374,9 +5440,14 @@ async function _genererPDFAvecSignature(memberId, signatureDataUrl) {
   }
   const codeDoss = _codeDOM_qs || state.codeDossierPreview || '';
   const filename = (codeDoss ? codeDoss + '_' : '') + prenom + '-' + nom + '_QS-Sante.pdf';
+  const filenameFRI = (codeDoss ? codeDoss + '_' : '') + prenom + '-' + nom + '_Attestation-Sante.pdf';
 
-  // PDF généré et envoyé au FRI — pas d'ouverture dans un nouvel onglet
-  showToast('✅ QS Santé signé et envoyé au FRI', 'green', 5000);
+  // Copie complète (questionnaire + attestation) téléchargée sur l'appareil de l'adhérent ;
+  // seule l'attestation (page 2) est transmise au FRI : les réponses restent privées.
+  try { doc.save(filename.replace('_QS-Sante.pdf', '_Questionnaire-et-attestation-sante.pdf')); }
+  catch(eSave) { console.warn('Téléchargement QS KO:', eSave); }
+  try { doc.deletePage(1); } catch(eDel) { console.warn('Retrait page 1 KO:', eDel); }
+  showToast('✅ Attestation signée — votre copie complète a été téléchargée sur votre appareil', 'green', 6000);
   // Marquer le membre comme ayant signé et envoyé son QS → active le bouton Continuer
   if (m) {
     m.qsResult = 'attestation_ok';
@@ -5384,7 +5455,8 @@ async function _genererPDFAvecSignature(memberId, signatureDataUrl) {
     const resEl = document.getElementById('qs-result-' + m.id);
     if (resEl) {
       resEl.className = 'qs-result qs-ok';
-      resEl.innerHTML = '✅ Attestation santé signée et envoyée au FRI.';
+      resEl.innerHTML = '✅ Attestation de santé signée — elle sera transmise au FRI avec votre dossier. '
+        + 'Le questionnaire complet a été téléchargé sur votre appareil (à conserver).';
     }
     checkHealthContinuerBtn();
   }
@@ -5399,15 +5471,15 @@ async function _genererPDFAvecSignature(memberId, signatureDataUrl) {
     // Stocker dans le membre pour envoi lors de sendToGoogleSheets
     const mIdx = state.members.findIndex(mb => mb.id === memberId);
     if (mIdx >= 0) {
-      state.members[mIdx].qsPdfBase64   = pdfBase64;
-      state.members[mIdx].qsPdfFilename = filename;
+      state.members[mIdx].qsPdfBase64   = pdfBase64;     // attestation seule (page 2)
+      state.members[mIdx].qsPdfFilename = filenameFRI;
     }
     // Persister dans localStorage (métadonnées seulement, pas le PDF base64)
     try {
       const qsPending = JSON.parse(localStorage.getItem('fri_qs_pending') || '[]');
       qsPending.push({
         memberId: memberId,
-        filename: filename,
+        filename: filenameFRI,
         // pdfBase64 NON stocké (trop volumineux ~800Ko) — récupéré depuis state au retour HA
         prenom: state.members[mIdx]?.prenom || '',
         nom:    state.members[mIdx]?.nom    || '',
@@ -9621,7 +9693,7 @@ function mergerDossiersSheet(dossiers) {
         ddn:       d.ddn           || '',
         sexe:      d.sexe           || '',
         activities: [],
-        qsResult:  d.qs_sante === 'Certificat requis' ? 'certificat_requis'
+        qsResult:  (d.qs_sante === 'Certificat requis' || d.qs_sante === 'Certificat transmis') ? 'certificat_requis'
                  : d.qs_sante === 'Attestation OK'    ? 'attestation_ok' : null
       });
     }
@@ -12119,12 +12191,19 @@ async function docEnregistrer() {
           // Construire les réponses QS
           var nbQuesDoc = isMineur ? 18 : 7;
           var qsAnswersDoc = {};
+          var nbSansReponse = 0, nbOui = 0;
           for (var qi2=0; qi2<nbQuesDoc; qi2++) {
             var rads2 = document.querySelectorAll('input[name="doc-qs-'+qi2+'"]');
-            var val2 = 'non';
+            var val2 = '';
             rads2.forEach(function(r){ if(r.checked) val2=r.value; });
-            qsAnswersDoc[qi2] = val2;
+            if (!val2) nbSansReponse++;
+            if (val2 === 'oui') nbOui++;
+            qsAnswersDoc[qi2] = val2 || 'non';
           }
+          // Une réponse manquante ne vaut pas « non », et un OUI interdit l'attestation
+          if (nbSansReponse) throw new Error('répondez à toutes les questions du questionnaire de santé');
+          if (nbOui) throw new Error('vous avez répondu OUI à au moins une question : l\'attestation ne peut pas être signée, '
+            + 'un certificat médical de non contre-indication est obligatoire (à transmettre au FRI par email ou lors des permanences)');
 
           // Peupler state temporairement
           state.codeDossierPreview = code;

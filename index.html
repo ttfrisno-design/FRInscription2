@@ -590,9 +590,11 @@
 <div class="main vue-famille" id="vue-activites">
   <button type="button" class="lien-retour" onclick="ouvrirVue('menu')">← Retour au menu</button>
   <div class="section-title">🔎 Les activités 2026/2027</div>
-  <div class="field" style="margin:12px 0 20px;">
-    <label for="filtre-activites">Rechercher une activité, un jour, un lieu…</label>
-    <input type="search" id="filtre-activites" placeholder="ex : yoga, mercredi, théâtre" oninput="afficherCatalogueActivites()">
+  <div class="section-sub">Choisissez une ou plusieurs rubriques pour afficher leurs créneaux dans la semaine.</div>
+  <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:10px 0 4px;font-size:14px;" role="radiogroup" aria-label="Tarif affiché">
+    <strong>Tarif affiché :</strong>
+    <label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="radio" name="tarif-consultation" value="isno" checked onchange="changerTarifConsultation(true)"> Isneauville</label>
+    <label style="display:flex;gap:6px;align-items:center;cursor:pointer;"><input type="radio" name="tarif-consultation" value="hc" onchange="changerTarifConsultation(false)"> Hors commune</label>
   </div>
   <div id="catalogue-activites"></div>
   <div style="text-align:center;margin-top:24px;">
@@ -2733,6 +2735,15 @@ function renderMembers() {
 
 // ── SEMAINIER ────────────────────────────────────────────────
 const DAYS = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+
+// Semainier en simple consultation (menu « Consulter les activités ») : pseudo-membre
+// sans sélection possible, tarif choisi par le visiteur.
+const ID_SEMAINIER_CONSULTATION = 999;
+let _consultationIsno = true;
+function estTarifIsno(memberId) {
+  if (memberId === ID_SEMAINIER_CONSULTATION) return _consultationIsno;
+  return ((state.responsable && state.responsable.commune) || 'isno') === 'isno';
+}
 const DAY_SHORT = ['Lun.','Mar.','Mer.','Jeu.','Ven.','Sam.'];
 
 // Color palette per category key
@@ -2826,7 +2837,7 @@ function semainierHtml(memberId) {
   return `
     <div style="margin-top:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
-        <div style="font-weight:700;font-size:14px;color:var(--dark);">📅 Choisissez vos activités dans le semainier</div>
+        <div style="font-weight:700;font-size:14px;color:var(--dark);">${memberId === ID_SEMAINIER_CONSULTATION ? '📅 Semainier des activités' : '📅 Choisissez vos activités dans le semainier'}</div>
         <div style="font-size:11px;color:var(--gray);white-space:nowrap;">💡 Cliquez sur une ou plusieurs catégories pour afficher les créneaux</div>
       </div>
       <div class="semainier-tabs" id="sem-tabs-${memberId}" style="display:block;">${tabsHtml}</div>
@@ -2838,13 +2849,13 @@ function semainierHtml(memberId) {
         <span><span class="sem-legend-dot" style="background:#d8f3dc;border:1px solid #52b788"></span>Disponible</span>
         <span><span class="sem-legend-dot" style="background:#fff3cd;border:1px solid #c9a84c"></span>Dernières places</span>
         <span><span class="sem-legend-dot" style="background:#f8d7da;border:1px solid #c0392b"></span>Complet</span>
-        <span><span class="sem-legend-dot" style="background:var(--dark);border:1px solid var(--dark)"></span>Sélectionné</span>
+        ${memberId === ID_SEMAINIER_CONSULTATION ? '' : '<span><span class="sem-legend-dot" style="background:var(--dark);border:1px solid var(--dark)"></span>Sélectionné</span>'}
       </div>
     </div>`;
 }
 
 function buildGrid(memberId, tabDef) {
-  const isno = ((state.responsable && state.responsable.commune) || 'isno') === 'isno';
+  const isno = estTarifIsno(memberId);
   const { catKey, acts, key } = tabDef.key ? tabDef : { key: tabDef.key, acts: tabDef.acts, catKey: tabDef.key };
   const color = catColor(tabDef.key);
 
@@ -3169,7 +3180,7 @@ function switchSemTab(memberId, catKey) {
 
 // Construire une grille fusionnée pour plusieurs catégories
 function buildMergedGrid(memberId, catKeys) {
-  const isno  = (state.responsable.commune || 'isno') === 'isno';
+  const isno  = estTarifIsno(memberId);
   const allTabs = buildCategoryTabs();
 
   // Collecter toutes les activités des catégories sélectionnées
@@ -3364,6 +3375,10 @@ function afficherMessagesCountry(memberId, triggerId) {
 
 
 function toggleSlot(memberId, actId) {
+  if (memberId === ID_SEMAINIER_CONSULTATION) {
+    showToast('Pour vous inscrire à cette activité, choisissez « Créer un compte » dans le menu.', 'green', 4000);
+    return;
+  }
   const m = state.members.find(m => m.id === memberId);
   if (!m) return;
 
@@ -10775,43 +10790,22 @@ document.addEventListener('DOMContentLoaded', function() {
   ouvrirVue(VUES_SITE.indexOf(h) >= 0 ? h : 'menu', true);
 });
 
-// ── 1. Catalogue des activités ──
+// ── 1. Consulter les activités : même semainier et mêmes rubriques que l'inscription ──
 function afficherCatalogueActivites() {
   const cont = document.getElementById('catalogue-activites');
   if (!cont) return;
-  const filtre = (document.getElementById('filtre-activites')?.value || '').trim().toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const norm = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const lieux = (typeof SALLES_LABELS !== 'undefined') ? SALLES_LABELS : {};
-  const dejaVu = new Set();
-  let html = '';
-  const blocCategorie = (titre, acts) => {
-    const fiches = acts.filter(a => {
-      if (dejaVu.has(a.id)) return false;
-      const texte = norm([a.name, a.jour, a.heure, a.lieu, lieux[a.lieu], a.animateur, titre].join(' '));
-      return !filtre || texte.indexOf(filtre) >= 0;
-    }).map(a => {
-      dejaVu.add(a.id);
-      const tarif = a.isno === a.hc ? a.isno + ' €' : a.isno + ' € (Isneauville) · ' + a.hc + ' € (hors commune)';
-      return '<div class="fiche-activite">'
-        + '<div class="fa-nom">' + escHtml(String(a.name).replace(/\n/g, ' — ')) + '</div>'
-        + '<div>📅 ' + escHtml(a.jour || '') + (a.heure ? ' · ' + escHtml(a.heure.replace('/', ' – ')) : '') + '</div>'
-        + (a.lieu ? '<div>📍 ' + escHtml(lieux[a.lieu] || a.lieu) + '</div>' : '')
-        + (a.animateur ? '<div>👤 ' + escHtml(a.animateur) + '</div>' : '')
-        + (a.note ? '<div style="color:var(--gray);font-size:12px;">' + escHtml(a.note) + '</div>' : '')
-        + '<div class="fa-tarif">' + tarif + '</div>'
-        + '<div style="margin-top:4px;">' + placeBadgeHtml(a.id) + '</div>'
-        + '</div>';
-    }).join('');
-    if (fiches) html += '<div class="cat-activites"><h3>' + escHtml(titre) + '</h3><div class="liste-activites">' + fiches + '</div></div>';
-  };
-  for (const section of Object.values(ACTIVITIES)) {
-    for (const cat of Object.values(section.cats)) {
-      if (cat.acts) blocCategorie((cat.icon ? cat.icon + ' ' : '') + cat.label, cat.acts);
-      else for (const sub of Object.values(cat)) if (sub && sub.acts) blocCategorie((sub.icon ? sub.icon + ' ' : '') + sub.label, sub.acts);
-    }
-  }
-  cont.innerHTML = html || '<p style="color:var(--gray)">Aucune activité ne correspond à votre recherche.</p>';
+  const id = ID_SEMAINIER_CONSULTATION;
+  const rubriques = _activeCats[id] ? [..._activeCats[id]] : [];
+  delete _activeCats[id];
+  cont.innerHTML = semainierHtml(id);
+  // Réafficher les rubriques déjà choisies (après chargement des places ou changement de tarif)
+  rubriques.forEach(cat => switchSemTab(id, cat));
+  if (typeof initAllSemainierTouchHandlers === 'function') initAllSemainierTouchHandlers();
+}
+
+function changerTarifConsultation(isno) {
+  _consultationIsno = isno;
+  afficherCatalogueActivites();
 }
 
 // ── Identification famille (code dossier + email), partagée par « compte » et « modifier » ──

@@ -1360,8 +1360,9 @@ if (FRI_ENV === 'test') {
 const PRORATA_DEBUT = '2027-01-01';
 const SAISON_PREMIERE_SEMAINE = '2026-09-14';   // lundi de la 1re semaine d'activité
 const SAISON_NB_SEMAINES = 34;
-// Vacances scolaires zone B (académie de Normandie), du samedi au dimanche inclus.
-// ⚠️ À vérifier chaque saison : une semaine dont le lundi tombe en vacances n'est pas comptée.
+// Vacances scolaires zone B (académie de Normandie), du samedi au dimanche inclus,
+// confirmées pour 2026/2027. À mettre à jour chaque saison : une semaine dont le
+// lundi tombe en vacances n'est pas comptée.
 const VACANCES_SCOLAIRES = [
   ['2026-10-17', '2026-11-01'], // Toussaint
   ['2026-12-19', '2027-01-03'], // Noël

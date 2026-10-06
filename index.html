@@ -8682,6 +8682,7 @@ function ouvrirDetailDossier(code, docId) {
     + qsItems
     + checkItem('ri', 'Règlement intérieur signé', '&#x1F4DC;')
     + (hasFFTT ? checkItem('bordereau_fftt', 'Bordereau FFTT reçu / généré', '&#x1F3D3;') : '')
+    + '<div id="pieces-auto-' + docId + '" style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.05);font-size:12px;color:rgba(255,255,255,0.7);">⏳ Contrôle automatique des pièces (Drive)…</div>'
     + '</div>';
 
   // Reglement & Aides — charge depuis le Sheet avec cases a cocher
@@ -8775,6 +8776,8 @@ function ouvrirDetailDossier(code, docId) {
   // l'attribut HTML si le code dossier ou l'id contiennent un caractère
   // spécial (ex: "Uncaught ReferenceError: FRI is not defined" quand les
   // guillemets autour du code étaient perdus dans l'attribut onclick).
+  setTimeout(() => afficherPiecesAuto(code, docId), 50);
+
   const btnDelete = panel.querySelector('#btn-delete-dossier');
   if (btnDelete) {
     btnDelete.addEventListener('click', function() {
@@ -9368,6 +9371,27 @@ async function renvoyerEmailInscription(code) {
   }
 }
 
+// Pièces vérifiées par le serveur : QS (attestation), certificat médical si réponse OUI, règlement intérieur
+async function chargerPiecesDossier(code) {
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'getPiecesDossier', code: code });
+    const d = r && r.data ? nettoyerTexteRecu(r.data) : null;
+    return (d && d.status === 'ok' && Array.isArray(d.pieces)) ? d.pieces : null;
+  } catch(e) { return null; }
+}
+
+async function afficherPiecesAuto(code, docId) {
+  const bloc = document.getElementById('pieces-auto-' + docId);
+  if (!bloc) return;
+  const pieces = await chargerPiecesDossier(code);
+  if (!pieces) { bloc.textContent = '⚠️ Contrôle automatique indisponible'; return; }
+  const manquantes = pieces.filter(p => !p.recu).length;
+  bloc.innerHTML = '<div style="font-weight:700;margin-bottom:4px;color:' + (manquantes ? '#ffab40' : '#52b788') + '">'
+    + (manquantes ? '🔎 ' + manquantes + ' pièce(s) manquante(s) — contrôle Drive' : '🔎 Toutes les pièces sont présentes sur le Drive') + '</div>'
+    + pieces.map(p => '<div>' + (p.recu ? '✅ ' : '❌ ') + escHtml(p.label)
+        + (p.type === 'CERTIF' ? ' <span style="color:#ffab40">(obligatoire : réponse OUI au QS)</span>' : '') + '</div>').join('');
+}
+
 async function envoyerRappelPieces(code) {
   if (!requireAdmin()) return;
   const url = getAppsScriptUrl();
@@ -9406,6 +9430,13 @@ async function envoyerRappelPieces(code) {
         piecesUniques.push(label);
       }
     }
+  });
+
+  // 3. Contrôle automatique : QS, certificat médical (si OUI au QS) et règlement intérieur absents du Drive
+  const piecesAuto = await chargerPiecesDossier(code);
+  (piecesAuto || []).filter(p => !p.recu).forEach(p => {
+    const label = p.type === 'CERTIF' ? p.label + ' (obligatoire suite à une réponse OUI au questionnaire de santé)' : p.label;
+    if (!piecesUniques.some(x => x.toLowerCase() === label.toLowerCase())) piecesUniques.push(label);
   });
 
   if (piecesUniques.length === 0) {
@@ -11412,6 +11443,28 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 });
 
+// Numéros de téléphone : espaces ajoutés automatiquement (06 12 34 56 78)
+function formaterTelephone(v) {
+  let chiffres = String(v || '').replace(/\D/g, '');
+  if (/^(33|0033)\d{9}$/.test(chiffres)) chiffres = '0' + chiffres.slice(-9);   // +33 6… → 06…
+  chiffres = chiffres.slice(0, 10);
+  return chiffres.replace(/(\d{2})(?=\d)/g, '$1 ');
+}
+document.addEventListener('input', function(e) {
+  const el = e.target;
+  if (!el || el.type !== 'tel') return;
+  const finDeChamp = el.selectionStart === el.value.length;
+  const f = formaterTelephone(el.value);
+  if (finDeChamp && f !== el.value) el.value = f;   // en cours de frappe à la fin : mise en forme immédiate
+}, true);
+document.addEventListener('blur', function(e) {
+  const el = e.target;
+  if (el && el.type === 'tel' && el.value) {
+    const f = formaterTelephone(el.value);
+    if (f !== el.value) { el.value = f; el.dispatchEvent(new Event('input', { bubbles: true })); }
+  }
+}, true);
+
 // Le contour rouge disparaît dès que l'utilisateur corrige le champ
 document.addEventListener('input', function(e) {
   const el = e.target;
@@ -12135,6 +12188,12 @@ function docMajAffichage() {
   var selPJ = document.getElementById('doc-sel-pj');
   var cardPJ = document.getElementById('doc-pj-card');
   var lblPJ  = document.getElementById('doc-sel-pj-label');
+  var selCM = document.getElementById('doc-sel-cm');
+  var wantCM = selCM && selCM.checked;
+  var cardCM = document.getElementById('doc-cm-card');
+  if (cardCM) cardCM.style.display = wantCM ? 'block' : 'none';
+  var lblCM = document.getElementById('doc-sel-cm-label');
+  if (lblCM) { lblCM.style.borderColor = wantCM ? '#1565c0' : '#bbdefb'; lblCM.style.background = wantCM ? '#e3f2fd' : '#f9f9f9'; }
   var wantQS = selQS && selQS.checked;
   var wantRI = selRI && selRI.checked;
   var wantPJ = selPJ && selPJ.checked;
@@ -12147,7 +12206,7 @@ function docMajAffichage() {
   if (lblRI) { lblRI.style.borderColor = wantRI ? 'var(--green)' : '#e0e0e0'; lblRI.style.background = wantRI ? '#e8f5e9' : '#f9f9f9'; }
   if (lblPJ) { lblPJ.style.borderColor = wantPJ ? '#f9a825' : '#e0e0e0'; lblPJ.style.background = wantPJ ? '#fffde7' : '#f9f9f9'; }
 
-  var rien = !wantQS && !wantRI && !wantPJ;
+  var rien = !wantQS && !wantRI && !wantPJ && !wantCM;
   var btnEnv = document.getElementById('doc-btn-enregistrer');
   if (btnEnv) { btnEnv.disabled = rien; btnEnv.style.opacity = rien ? '0.4' : '1'; }
 
@@ -12232,6 +12291,7 @@ async function docEnregistrer() {
   var selQS = document.getElementById('doc-sel-qs')?.checked;
   var selRI = document.getElementById('doc-sel-ri')?.checked;
   var selPJf = document.getElementById('doc-sel-pj')?.checked;
+  var selCMf = document.getElementById('doc-sel-cm')?.checked;
 
   // QS : champs membre
   var prenom = '', nom = '', ddn = '', email = '';
@@ -12418,6 +12478,29 @@ async function docEnregistrer() {
         console.error('RI doc KO:', eRI);
         erreurs.push('RI : '+eRI.message);
       }
+    }
+  }
+
+  // ── Certificat médical (envoi vérifié ; la feuille indique « Certificat transmis ») ──
+  if (selCMf) {
+    var cmPrenom = (document.getElementById('doc-cm-prenom')?.value || '').trim();
+    var cmNom    = (document.getElementById('doc-cm-nom')?.value || '').trim().toUpperCase();
+    var cmFile   = document.getElementById('doc-cm-input')?.files?.[0];
+    if (!cmPrenom || !cmNom) erreurs.push('Indiquez le prénom et le nom du membre pour le certificat médical');
+    else if (!cmFile) erreurs.push('Aucun fichier sélectionné pour le certificat médical');
+    else if (cmFile.size > 5 * 1024 * 1024) erreurs.push('Certificat trop volumineux (max 5 Mo)');
+    else {
+      try {
+        var cmB64 = await new Promise(function(res, rej) {
+          var fr = new FileReader(); fr.onload = function() { res(String(fr.result).split(',')[1] || ''); };
+          fr.onerror = function() { rej(new Error('lecture du fichier impossible')); }; fr.readAsDataURL(cmFile);
+        });
+        var cmExt = (cmFile.name.match(/\.[a-z0-9]+$/i) || ['.pdf'])[0];
+        await envoyerAuServeur({ action: 'uploadCertificatMedical', code: code, nom: cmNom, prenom: cmPrenom,
+          filename: code + '_' + cmPrenom + '-' + cmNom + '_Certificat-medical' + cmExt,
+          mimeType: cmFile.type || 'application/octet-stream', fileBase64: cmB64 });
+        nb++;
+      } catch(eCM) { erreurs.push('Certificat médical : ' + eCM.message); }
     }
   }
 
@@ -12620,6 +12703,13 @@ function remplirFormulaireAdherent(idx) {
           <div style="font-size:12px;color:var(--gray);">Acceptation du règlement du Foyer Rural</div>
         </div>
       </label>
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;border:2px solid #bbdefb;border-radius:10px;background:#f9f9f9;" id="doc-sel-cm-label">
+        <input type="checkbox" id="doc-sel-cm" onchange="docMajAffichage()" style="width:20px;height:20px;">
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--dark);">🩺 Certificat médical</div>
+          <div style="font-size:12px;color:var(--gray);">Obligatoire si vous avez répondu OUI à une question du questionnaire de santé</div>
+        </div>
+      </label>
       <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;border:2px solid #ffe082;border-radius:10px;background:#f9f9f9;" id="doc-sel-pj-label">
         <input type="checkbox" id="doc-sel-pj" onchange="docMajAffichage()" style="width:20px;height:20px;">
         <div>
@@ -12748,6 +12838,21 @@ function remplirFormulaireAdherent(idx) {
   </div>
 
   </div><!-- /doc-form-body -->
+
+  <!-- Certificat médical -->
+  <div class="card" id="doc-cm-card" style="margin-bottom:16px;display:none;">
+    <div class="card-title">🩺 Certificat médical</div>
+    <p style="font-size:13px;color:var(--gray);margin-bottom:12px;">
+      Certificat de non contre-indication à la pratique sportive de moins d'un an.<br>
+      <strong>Formats acceptés :</strong> PDF, JPG, PNG &mdash; max 5 Mo
+    </p>
+    <div class="form-grid">
+      <div class="field"><label for="doc-cm-prenom">Prénom du membre <span class="req">*</span></label><input type="text" id="doc-cm-prenom"></div>
+      <div class="field"><label for="doc-cm-nom">Nom du membre <span class="req">*</span></label><input type="text" id="doc-cm-nom" style="text-transform:uppercase"></div>
+    </div>
+    <input type="file" id="doc-cm-input" accept=".pdf,.jpg,.jpeg,.png,image/*"
+      style="font-size:13px;width:100%;box-sizing:border-box;margin:10px 0 8px;">
+  </div>
 
   <!-- Pièces justificatives -->
   <div class="card" id="doc-pj-card" style="margin-bottom:16px;display:none;">

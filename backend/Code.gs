@@ -2196,6 +2196,9 @@ function traiterRequete(e) {
       return repondreAvecCb(demanderModificationGAS(payload),null,null,callback);
     }
     // ── Console admin : demandes de modification des familles ──
+    if(payload.action==='getPiecesDossier'){
+      return repondreAvecCb(controlerPiecesDossier(String(payload.code||'').trim().toUpperCase()),null,null,callback);
+    }
     if(payload.action==='getDemandesModification'){
       return repondreAvecCb(lireDemandesModification(),null,null,callback);
     }
@@ -2538,7 +2541,7 @@ var ACTIONS_ADMIN = [
   'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle',
   'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
   'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques',
-  'getDemandesModification', 'traiterDemandeModification'
+  'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier'
 ];
 var REPONSE_ADMIN_REQUISE = {
   status: 'error', code: 'ADMIN_AUTH',
@@ -3051,6 +3054,80 @@ function lireDossierFamille(codeBrut, emailBrut) {
     statutPaiement: String(r0[21] || '').trim(),
     membres: ordre.map(function(k) { return membres[k]; })
   }};
+}
+
+// ── Contrôle automatique des pièces d'un dossier (console admin, rappel pièces manquantes) ──
+// QS santé : attestation attendue si « Attestation OK » / « Non rempli » / « Non signé » ;
+// certificat médical attendu si une réponse OUI (« Certificat requis » / « Certificat transmis ») ;
+// règlement intérieur : un par dossier. Présence vérifiée dans les dossiers Drive (nom de fichier = code).
+var DOSSIERS_QS = ['2-QS Santé Adhérents', '21-QS Santé corrigés'];
+var DOSSIERS_RI = ['3-Règlements intérieurs', '31-RI corrigé'];
+var DOSSIERS_CERTIF = ['1-Certificats médicaux'];
+
+function _fichiersDuDossier(nomsDossiers, code) {
+  var noms = [];
+  nomsDossiers.forEach(function(nd) {
+    try {
+      var it = dossiersDriveParNom(nd);
+      while (it.hasNext()) {
+        var f = it.next().searchFiles('title contains "' + code + '" and trashed = false');
+        while (f.hasNext()) noms.push(f.next().getName().toUpperCase());
+      }
+    } catch(e) { Logger.log('Recherche Drive ' + nd + ' KO : ' + e); }
+  });
+  return noms;
+}
+
+function controlerPiecesDossier(code) {
+  if (!/^FRI-[A-Z0-9]{4}$/.test(code)) return {status:'error', message:'Code invalide'};
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+  if (!sh || sh.getLastRow() < 2) return {status:'ok', pieces: []};
+  var nbCol = Math.min(Math.max(sh.getLastColumn(), 40), 45);
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, nbCol).getValues();
+  var membres = {}, ordre = [];
+  data.forEach(function(r) {
+    if (String(r[19] || '').trim() !== code) return;
+    var st = lireStatutInscription(r).toLowerCase();
+    if (st.indexOf('supprim') >= 0) return;
+    var k = (String(r[3] || '').trim() + ' ' + String(r[2] || '').trim()).trim();
+    if (!membres[k]) { membres[k] = { prenom: String(r[3] || '').trim(), nom: String(r[2] || '').trim(), qs: '' }; ordre.push(k); }
+    var qs = String(r[34] || '').trim();
+    if (qs && (!membres[k].qs || /certificat/i.test(qs))) membres[k].qs = qs;   // une mention certificat l'emporte
+  });
+  if (!ordre.length) return {status:'ok', pieces: []};
+  var fQS = _fichiersDuDossier(DOSSIERS_QS, code), fRI = _fichiersDuDossier(DOSSIERS_RI, code), fCM = _fichiersDuDossier(DOSSIERS_CERTIF, code);
+  var norm = function(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z]/g, ''); };
+  var contientMembre = function(liste, m) {
+    var p = norm(m.prenom), n = norm(m.nom);
+    return liste.some(function(nomF) { var t = norm(nomF); return t.indexOf(p) >= 0 && t.indexOf(n) >= 0; });
+  };
+  var pieces = [];
+  ordre.forEach(function(k) {
+    var m = membres[k], qs = m.qs.toLowerCase();
+    if (qs.indexOf('pas de qs') >= 0) return;
+    if (qs.indexOf('certificat') >= 0) {
+      pieces.push({ type: 'CERTIF', membre: k, label: 'Certificat médical — ' + k, recu: contientMembre(fCM, m) });
+    } else {
+      pieces.push({ type: 'QS', membre: k, label: 'Attestation de santé (QS) — ' + k, recu: contientMembre(fQS, m) });
+    }
+  });
+  pieces.push({ type: 'RI', membre: '', label: 'Règlement intérieur signé', recu: fRI.length > 0 });
+  return {status:'ok', pieces: pieces};
+}
+
+// Certificat reçu → la feuille l'indique pour ce membre (colonne QS santé)
+function marquerCertificatTransmis(code, nom, prenom) {
+  try {
+    var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+    if (!sh || sh.getLastRow() < 2) return;
+    var norm = function(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z]/g, ''); };
+    var data = sh.getRange(2, 1, sh.getLastRow() - 1, 35).getValues();
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][19] || '').trim() !== code) continue;
+      if (norm(data[i][2]) !== norm(nom) || norm(data[i][3]) !== norm(prenom)) continue;
+      sh.getRange(i + 2, 35).setValue('Certificat transmis').setFontColor('#1b5e20');
+    }
+  } catch(e) { Logger.log('marquerCertificatTransmis KO : ' + e); }
 }
 
 // ── Demandes de modification : onglet dédié, une ligne par ajout / retrait ──
@@ -8524,6 +8601,7 @@ function uploadCertificatMedicalGAS(code, nom, prenom, filename, mimeType, fileB
     var dossier  = obtenirDossierFRI('1-Certificats médicaux');
     var fichier  = dossier.createFile(blob);
     securiserFichier(fichier);
+    if (/^FRI-[A-Z0-9]{4}$/.test(code)) marquerCertificatTransmis(code, nom, prenom);
     Logger.log('Certificat medical Drive OK : ' + filename + ' (' + decoded.length + ' bytes)');
     return { status: 'ok', message: 'Certificat enregistre : ' + filename };
   } catch(e) {

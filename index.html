@@ -11462,6 +11462,36 @@ async function telechargerJustificatif() {
   showToast('✅ Justificatif téléchargé', 'green');
 }
 
+// Tarifs dans « Modifier mes activités » : tarif Isneauville / hors commune selon le dossier,
+// réduction femme au tennis de table et prorata en cours de saison, comme à l'inscription.
+function euroModif(v) { return (Math.round(Number(v) * 100) / 100).toFixed(2).replace('.', ',').replace(',00', '') + ' €'; }
+function membreModifSelectionne() {
+  const d = _identFamille && _identFamille.dossier;
+  const v = document.getElementById('modif-membre')?.value;
+  return (d && (d.membres || []).find(m => (m.prenom + ' ' + m.nom).trim() === v)) || null;
+}
+function tarifModif(act, membre) {
+  const d = _identFamille && _identFamille.dossier;
+  const isno = !d || d.isno !== false;
+  return tarifActiviteMembre(act, membre ? { sexe: membre.sexe } : null, isno);
+}
+function optionsActivitesModif(membre) {
+  return getAllActs().filter((a, i, t) => t.findIndex(b => b.id === a.id) === i)
+    .map(a => {
+      const prix = tarifModif(a, membre);
+      const femme = membre && membre.sexe === 'F' && isTTActivity(a.id) ? ' (−' + REDUCTION_FEMME_TT + ' € femme)' : '';
+      return '<option value="' + escHtml(a.id) + '">' + escHtml(a.name.replace(/\n/g, ' — ') + ' — ' + (a.jour || '') + ' ' + (a.heure || '')
+        + (prix ? ' — ' + euroModif(prix) + femme : '')) + '</option>';
+    }).join('');
+}
+function majOptionsActivitesModif() {
+  const sel = document.getElementById('modif-activite');
+  if (!sel) return;
+  const v = sel.value;
+  sel.innerHTML = '<option value="">— Choisir —</option>' + optionsActivitesModif(membreModifSelectionne());
+  sel.value = v;
+}
+
 // ── 4. Modifier vos activités (demande transmise à l'admin) ──
 let _ajoutsDemandes = [];
 function afficherFormulaireModification() {
@@ -11472,7 +11502,8 @@ function afficherFormulaireModification() {
   let n = 0;
   (d.membres || []).forEach(m => (m.activites || []).forEach(a => {
     const membre = (m.prenom + ' ' + m.nom).trim();
-    const libelle = membre + ' : ' + a.nom.replace(/\n/g, ' — ') + (a.jour ? ' (' + a.jour + (a.heure ? ' ' + a.heure : '') + ')' : '');
+    const libelle = membre + ' : ' + a.nom.replace(/\n/g, ' — ') + (a.jour ? ' (' + a.jour + (a.heure ? ' ' + a.heure : '') + ')' : '')
+      + (a.tarif ? ' — ' + euroModif(a.tarif) : '');
     html += '<label style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;font-size:14px;cursor:pointer;">'
       + '<input type="checkbox" class="modif-retrait" data-membre="' + escHtml(membre) + '" data-act="' + escHtml(a.id) + '" data-nom="' + escHtml(a.nom) + '" style="margin-top:3px;"> '
       + escHtml(libelle) + '</label>';
@@ -11481,13 +11512,12 @@ function afficherFormulaireModification() {
   if (!n) html += '<p style="color:var(--gray);font-size:14px;">Aucune activité enregistrée.</p>';
   html += '</div>';
 
-  const options = getAllActs().filter((a, i, t) => t.findIndex(b => b.id === a.id) === i)
-    .map(a => '<option value="' + escHtml(a.id) + '">' + escHtml(a.name.replace(/\n/g, ' — ') + ' — ' + (a.jour || '') + ' ' + (a.heure || '')) + '</option>').join('');
+  const options = optionsActivitesModif(d.membres && d.membres[0]);
   const optMembres = (d.membres || []).map(m => '<option>' + escHtml((m.prenom + ' ' + m.nom).trim()) + '</option>').join('')
     + '<option value="__nouveau">Un nouveau membre de la famille</option>';
   html += '<div class="card"><div class="card-title">➕ Activités à ajouter</div>'
     + '<div class="form-grid">'
-    + '<div class="field"><label for="modif-membre">Pour</label><select id="modif-membre">' + optMembres + '</select></div>'
+    + '<div class="field"><label for="modif-membre">Pour</label><select id="modif-membre" onchange="majOptionsActivitesModif()">' + optMembres + '</select></div>'
     + '<div class="field"><label for="modif-activite">Activité</label><select id="modif-activite"><option value="">— Choisir —</option>' + options + '</select></div>'
     + '</div><button type="button" class="btn btn-secondary" style="margin-top:12px;" onclick="ajouterDemandeActivite()">➕ Ajouter à ma demande</button>'
     + '<ul id="modif-liste-ajouts" style="margin:12px 0 0;padding-left:18px;font-size:14px;"></ul></div>';
@@ -11505,7 +11535,7 @@ function ajouterDemandeActivite() {
   if (!act) { showToast('Choisissez une activité', 'orange'); return; }
   const pour = selM.value === '__nouveau' ? 'Nouveau membre' : selM.value;
   const actNom = act.name.replace(/\n/g, ' — ') + ' (' + (act.jour || '') + ' ' + (act.heure || '') + ')';
-  if (!_ajoutsDemandes.some(x => x.membre === pour && x.actId === act.id)) _ajoutsDemandes.push({ membre: pour, actId: act.id, actNom: actNom });
+  if (!_ajoutsDemandes.some(x => x.membre === pour && x.actId === act.id)) _ajoutsDemandes.push({ membre: pour, actId: act.id, actNom: actNom, prix: tarifModif(act, membreModifSelectionne()) });
   selA.value = '';
   majListeAjouts();
 }
@@ -11514,8 +11544,14 @@ function retirerDemandeActivite(i) { _ajoutsDemandes.splice(i, 1); majListeAjout
 
 function majListeAjouts() {
   const ul = document.getElementById('modif-liste-ajouts');
-  if (ul) ul.innerHTML = _ajoutsDemandes.map((l, i) =>
-    '<li style="margin-bottom:4px;">' + escHtml(l.membre + ' : ' + l.actNom) + ' <button type="button" class="lien-retour" style="margin:0;padding:0 6px;color:var(--red)" onclick="retirerDemandeActivite(' + i + ')" aria-label="Retirer">✕</button></li>').join('');
+  if (!ul) return;
+  const total = _ajoutsDemandes.reduce((t, l) => t + (Number(l.prix) || 0), 0);
+  ul.innerHTML = _ajoutsDemandes.map((l, i) =>
+    '<li style="margin-bottom:4px;">' + escHtml(l.membre + ' : ' + l.actNom) + (l.prix ? ' — <strong>' + euroModif(l.prix) + '</strong>' : '')
+    + ' <button type="button" class="lien-retour" style="margin:0;padding:0 6px;color:var(--red)" onclick="retirerDemandeActivite(' + i + ')" aria-label="Retirer">✕</button></li>').join('')
+    + (_ajoutsDemandes.length ? '<li style="list-style:none;margin:8px 0 0 -18px;font-size:13px;color:var(--gray);">Montant indicatif des ajouts : <strong>' + euroModif(total) + '</strong>'
+      + (_ajoutsDemandes.some(l => l.membre === 'Nouveau membre') ? ' + 15 € d\'adhésion pour un nouveau membre' : '')
+      + '. Le montant définitif (remise famille éventuelle) vous sera confirmé par le FRI.</li>' : '');
 }
 
 async function envoyerDemandeModification() {

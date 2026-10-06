@@ -3046,7 +3046,7 @@ function lireDossierFamille(codeBrut, emailBrut) {
     if (statut.toLowerCase().indexOf('supprim') >= 0) return;
     var prenom = String(r[3] || '').trim(), nom = String(r[2] || '').trim();
     var clef = (prenom + ' ' + nom).toUpperCase();
-    if (!membres[clef]) { membres[clef] = {prenom: prenom, nom: nom, activites: []}; ordre.push(clef); }
+    if (!membres[clef]) { membres[clef] = {prenom: prenom, nom: nom, sexe: lireSexe(r), activites: []}; ordre.push(clef); }
     membres[clef].activites.push({
       id:     lireActiviteId(r),
       nom:    String(r[22] || '').trim(),
@@ -3063,6 +3063,7 @@ function lireDossierFamille(codeBrut, emailBrut) {
     responsable: lireResponsable(r0) || String(r0[36] || '').trim(),
     email: String(r0[15] || '').trim(),
     statutPaiement: String(r0[21] || '').trim(),
+    isno: communeFromVille(r0[10]) === 'Isneauville',
     membres: ordre.map(function(k) { return membres[k]; }),
     justificatif: _donneesJustificatif(code, lignes)
   }};

@@ -2196,6 +2196,13 @@ function traiterRequete(e) {
       return repondreAvecCb(demanderModificationGAS(payload),null,null,callback);
     }
     // ── Console admin : demandes de modification des familles ──
+    // ── Coches de suivi de la console admin, partagées entre postes et comptes ──
+    if(payload.action==='getSuiviAdmin'){
+      return repondreAvecCb(lireSuiviAdmin(payload.code ? String(payload.code).trim().toUpperCase() : ''),null,null,callback);
+    }
+    if(payload.action==='majSuiviAdmin'){
+      return repondreAvecCb(majSuiviAdminGAS(payload.changements, sessionAdmin),null,null,callback);
+    }
     if(payload.action==='getPiecesDossier'){
       return repondreAvecCb(controlerPiecesDossier(String(payload.code||'').trim().toUpperCase()),null,null,callback);
     }
@@ -2541,7 +2548,8 @@ var ACTIONS_ADMIN = [
   'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle',
   'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
   'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques',
-  'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier'
+  'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier',
+  'getSuiviAdmin', 'majSuiviAdmin'
 ];
 var REPONSE_ADMIN_REQUISE = {
   status: 'error', code: 'ADMIN_AUTH',
@@ -3064,18 +3072,81 @@ var DOSSIERS_QS = ['2-QS Santé Adhérents', '21-QS Santé corrigés'];
 var DOSSIERS_RI = ['3-Règlements intérieurs', '31-RI corrigé'];
 var DOSSIERS_CERTIF = ['1-Certificats médicaux'];
 
+// Identifiants des dossiers Drive mémorisés 6 h : évite une recherche par nom à chaque contrôle
+function _idsDossiersDrive(nd) {
+  var cache = CacheService.getScriptCache(), clef = 'dossier_ids_' + nomDossierDrive(nd);
+  var enCache = cache.get(clef);
+  if (enCache !== null) return enCache ? enCache.split(',') : [];
+  var ids = [], it = dossiersDriveParNom(nd);
+  while (it.hasNext()) ids.push(it.next().getId());
+  cache.put(clef, ids.join(','), 21600);
+  return ids;
+}
+
 function _fichiersDuDossier(nomsDossiers, code) {
   var noms = [];
   nomsDossiers.forEach(function(nd) {
     try {
-      var it = dossiersDriveParNom(nd);
-      while (it.hasNext()) {
-        var f = it.next().searchFiles('title contains "' + code + '" and trashed = false');
+      _idsDossiersDrive(nd).forEach(function(id) {
+        var f = DriveApp.getFolderById(id).searchFiles('title contains "' + code + '" and trashed = false');
         while (f.hasNext()) noms.push(f.next().getName().toUpperCase());
-      }
+      });
     } catch(e) { Logger.log('Recherche Drive ' + nd + ' KO : ' + e); }
   });
   return noms;
+}
+
+// ── Suivi admin (coches « Reçu / Attente » des documents et règlements) ──
+// Onglet « Suivi admin » : une ligne par dossier et par élément.
+var SHEET_SUIVI_ADMIN = 'Suivi admin';
+function _feuilleSuiviAdmin() {
+  var ss = SpreadsheetApp.openById(SHEET_ID), sh = ss.getSheetByName(SHEET_SUIVI_ADMIN);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_SUIVI_ADMIN);
+    sh.getRange(1, 1, 1, 5).setValues([['Dossier', 'Élément', 'Statut', 'Modifié le', 'Par']])
+      .setFontWeight('bold').setBackground('#1a2e22').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function lireSuiviAdmin(codeSeul) {
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_SUIVI_ADMIN);
+  var suivi = {};
+  if (sh && sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues().forEach(function(r) {
+      var code = String(r[0] || '').trim();
+      if (!code || (codeSeul && code !== codeSeul)) return;
+      if (!suivi[code]) suivi[code] = {};
+      suivi[code][String(r[1])] = String(r[2]);
+    });
+  }
+  return {status:'ok', suivi: suivi};
+}
+
+function majSuiviAdminGAS(changements, session) {
+  if (!changements || typeof changements !== 'object') return {status:'error', message:'Aucun changement'};
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return {status:'error', message:'Serveur occupé, réessayez'};
+  try {
+    var sh = _feuilleSuiviAdmin(), index = {};
+    if (sh.getLastRow() > 1) {
+      sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues().forEach(function(r, i) { index[String(r[0]) + '|' + String(r[1])] = i + 2; });
+    }
+    var maintenant = Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm'), par = session ? session.user : '', nouvelles = [], nb = 0;
+    Object.keys(changements).forEach(function(code) {
+      if (!/^FRI-[A-Z0-9]{4}$/.test(code)) return;
+      var items = changements[code] || {};
+      Object.keys(items).forEach(function(item) {
+        var statut = String(items[item] || '').substring(0, 30), it = String(item).substring(0, 120), clef = code + '|' + it;
+        if (index[clef]) sh.getRange(index[clef], 3, 1, 3).setValues([[statut, maintenant, par]]);
+        else nouvelles.push([code, it, statut, maintenant, par]);
+        nb++;
+      });
+    });
+    if (nouvelles.length) sh.getRange(sh.getLastRow() + 1, 1, nouvelles.length, 5).setValues(nouvelles);
+    return {status:'ok', modifies: nb};
+  } finally { lock.releaseLock(); }
 }
 
 function controlerPiecesDossier(code) {

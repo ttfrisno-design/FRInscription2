@@ -7771,6 +7771,7 @@ async function doAdminLogin() {
       document.getElementById('admin-panel').scrollIntoView({ behavior: 'smooth' });
       try { chargerDossiersDepuisSheet(); } catch(e) {}
       try { chargerDemandesModification(); } catch(e) {}
+      try { chargerCochesAdmin().then(ch => { if (ch) { try { renderAdmin(); } catch(e) {} } }); } catch(e) {}
     } else {
       errEl.textContent = '❌ ' + ((data && data.message) || 'Identifiant ou mot de passe incorrect.');
       errEl.style.display = 'block';
@@ -8777,6 +8778,14 @@ function ouvrirDetailDossier(code, docId) {
   // spécial (ex: "Uncaught ReferenceError: FRI is not defined" quand les
   // guillemets autour du code étaient perdus dans l'attribut onclick).
   setTimeout(() => afficherPiecesAuto(code, docId), 50);
+  if (!ouvrirDetailDossier._resync) {
+    chargerCochesAdmin(code).then(change => {
+      if (change && document.getElementById('admin-detail-panel')) {
+        ouvrirDetailDossier._resync = true;
+        try { ouvrirDetailDossier(code, docId); } finally { ouvrirDetailDossier._resync = false; }
+      }
+    });
+  }
 
   const btnDelete = panel.querySelector('#btn-delete-dossier');
   if (btnDelete) {
@@ -9371,12 +9380,89 @@ async function renvoyerEmailInscription(code) {
   }
 }
 
-// Pièces vérifiées par le serveur : QS (attestation), certificat médical si réponse OUI, règlement intérieur
-async function chargerPiecesDossier(code) {
+// ============================================================
+// COCHES DE SUIVI ADMIN PARTAGÉES (Reçu / Attente des documents et règlements)
+// Les coches restent lues dans localStorage (fri_admin_checks) par la console, mais toute
+// modification est envoyée au serveur (onglet « Suivi admin ») et les coches du serveur sont
+// rechargées à la connexion, au rafraîchissement et à l'ouverture d'un dossier :
+// elles sont donc visibles depuis n'importe quel poste et n'importe quel compte admin.
+// ============================================================
+let _cochesAEnvoyer = {}, _minuteurCoches = null, _syncCochesEnCours = false;
+(function() {
+  const setItemOrigine = Storage.prototype.setItem;
+  Storage.prototype.setItem = function(k, v) {
+    let avant = null;
+    if (k === 'fri_admin_checks' && !_syncCochesEnCours) {
+      try { if (this === window.localStorage) avant = JSON.parse(this.getItem(k) || '{}'); } catch(e) { avant = null; }
+    }
+    const res = setItemOrigine.call(this, k, v);
+    if (avant) { try { noterChangementsCoches(avant, JSON.parse(v || '{}')); } catch(e) {} }
+    return res;
+  };
+})();
+
+function noterChangementsCoches(avant, apres) {
+  let jeton = null;
+  try { jeton = adminSessionToken; } catch(e) {}
+  if (!jeton) return;
+  Object.keys(apres).forEach(code => {
+    const a = avant[code] || {}, b = apres[code] || {};
+    Object.keys(b).forEach(item => {
+      if (a[item] !== b[item]) { (_cochesAEnvoyer[code] = _cochesAEnvoyer[code] || {})[item] = b[item]; }
+    });
+  });
+  if (!Object.keys(_cochesAEnvoyer).length) return;
+  clearTimeout(_minuteurCoches);
+  _minuteurCoches = setTimeout(envoyerCochesAdmin, 700);
+}
+
+async function envoyerCochesAdmin() {
+  const lot = _cochesAEnvoyer; _cochesAEnvoyer = {};
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'majSuiviAdmin', changements: lot });
+    const d = r && r.data;
+    if (!d || d.status !== 'ok') throw new Error((d && d.message) || 'refus du serveur');
+  } catch(e) {
+    // Remettre en file pour le prochain essai
+    Object.keys(lot).forEach(c => { _cochesAEnvoyer[c] = Object.assign({}, lot[c], _cochesAEnvoyer[c] || {}); });
+    clearTimeout(_minuteurCoches); _minuteurCoches = setTimeout(envoyerCochesAdmin, 5000);
+    showAdminToast('⚠️ Coche non enregistrée sur le serveur, nouvel essai…', 'orange');
+  }
+}
+
+// Recharge les coches du serveur (toutes, ou celles d'un dossier) ; renvoie true si quelque chose a changé
+async function chargerCochesAdmin(code) {
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'getSuiviAdmin', code: code || '' });
+    const d = r && r.data ? nettoyerTexteRecu(r.data) : null;
+    if (!d || d.status !== 'ok' || !d.suivi) return false;
+    const local = JSON.parse(localStorage.getItem('fri_admin_checks') || '{}');
+    let change = false;
+    Object.keys(d.suivi).forEach(c => {
+      const enAttenteEnvoi = _cochesAEnvoyer[c] || {};
+      Object.keys(d.suivi[c]).forEach(item => {
+        if (item in enAttenteEnvoi) return;               // modification locale pas encore envoyée : elle prime
+        if (!local[c]) local[c] = {};
+        if (local[c][item] !== d.suivi[c][item]) { local[c][item] = d.suivi[c][item]; change = true; }
+      });
+    });
+    if (change) { _syncCochesEnCours = true; try { localStorage.setItem('fri_admin_checks', JSON.stringify(local)); } finally { _syncCochesEnCours = false; } }
+    return change;
+  } catch(e) { console.warn('[FRI] chargement coches admin KO :', e); return false; }
+}
+
+// Pièces vérifiées par le serveur : QS (attestation), certificat médical si réponse OUI, règlement intérieur.
+// Résultat gardé 2 minutes : le rappel réutilise le contrôle fait à l'ouverture du dossier.
+const _cachePieces = {};
+async function chargerPiecesDossier(code, forcer) {
+  const c = _cachePieces[code];
+  if (!forcer && c && Date.now() - c.t < 120000) return c.pieces;
   try {
     const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'getPiecesDossier', code: code });
     const d = r && r.data ? nettoyerTexteRecu(r.data) : null;
-    return (d && d.status === 'ok' && Array.isArray(d.pieces)) ? d.pieces : null;
+    const pieces = (d && d.status === 'ok' && Array.isArray(d.pieces)) ? d.pieces : null;
+    if (pieces) _cachePieces[code] = { t: Date.now(), pieces };
+    return pieces;
   } catch(e) { return null; }
 }
 
@@ -9401,14 +9487,16 @@ async function envoyerRappelPieces(code) {
   const savedChecks = JSON.parse(localStorage.getItem('fri_admin_checks') || '{}');
   const checks = savedChecks[code] || {};
 
-  // Charger les éléments réels depuis le GAS
-  let elementsSheet = [];
-  try {
-    const resEl = await callAppsScriptFetch(url, {
-      action: 'getElementsPaiement', _token: FRI_SECRET_TOKEN, code: code });
-    const dataEl = (resEl && resEl.data) ? resEl.data : resEl;
-    elementsSheet = (dataEl && dataEl.elements) ? dataEl.elements : [];
-  } catch(e) { console.warn('getElementsPaiement KO:', e); }
+  showAdminToast('⏳ Analyse des pièces du dossier ' + code + '…', 'blue');
+  // Éléments de règlement, contrôle Drive et coches partagées : en parallèle (et non plus à la suite)
+  const [elementsSheet, piecesAuto] = await Promise.all([
+    callAppsScriptFetch(url, { action: 'getElementsPaiement', _token: FRI_SECRET_TOKEN, code: code })
+      .then(resEl => { const dataEl = (resEl && resEl.data) ? resEl.data : resEl; return (dataEl && dataEl.elements) ? dataEl.elements : []; })
+      .catch(e => { console.warn('getElementsPaiement KO:', e); return []; }),
+    chargerPiecesDossier(code),
+    chargerCochesAdmin(code)
+  ]);
+  Object.assign(checks, (JSON.parse(localStorage.getItem('fri_admin_checks') || '{}'))[code] || {});
 
   const piecesUniques = [];
 
@@ -9433,7 +9521,6 @@ async function envoyerRappelPieces(code) {
   });
 
   // 3. Contrôle automatique : QS, certificat médical (si OUI au QS) et règlement intérieur absents du Drive
-  const piecesAuto = await chargerPiecesDossier(code);
   (piecesAuto || []).filter(p => !p.recu).forEach(p => {
     const label = p.type === 'CERTIF' ? p.label + ' (obligatoire suite à une réponse OUI au questionnaire de santé)' : p.label;
     if (!piecesUniques.some(x => x.toLowerCase() === label.toLowerCase())) piecesUniques.push(label);
@@ -9572,6 +9659,7 @@ let sheetLoadInProgress = false; // guard contre les appels multiples
 async function chargerDossiersDepuisSheet() {
   // Guard: ne pas lancer plusieurs fois simultanément
   if (sheetLoadInProgress) return;
+  chargerCochesAdmin().catch(() => {});   // coches partagées entre postes / comptes admin
   sheetLoadInProgress = true;
 
   const url = getAppsScriptUrl();

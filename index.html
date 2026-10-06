@@ -525,6 +525,24 @@
   #admin-panel select {
     color-scheme: dark;
   }
+  .compte-badge { display:inline-block; margin:10px 0 2px; padding:6px 12px; border-radius:20px; font-size:14px; }
+  .compte-badge.ok { background:#d8f3dc; color:#1b4332; }
+  .compte-badge.attente { background:#fff3e0; color:#8a4b00; }
+  .compte-chargement { font-size:14px; color:var(--gray); padding:6px 0; }
+  .pieces-resume { display:flex; flex-direction:column; gap:8px; margin:4px 0 14px; font-size:15px; }
+  .pieces-barre { height:10px; border-radius:6px; background:#e9ecef; overflow:hidden; }
+  .pieces-barre span { display:block; height:100%; background:linear-gradient(90deg,#52b788,#2d6a4f); transition:width .4s; }
+  .pieces-grille { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px; }
+  .piece-tuile { display:flex; gap:12px; align-items:flex-start; padding:14px; border-radius:12px; border:2px solid; }
+  .piece-tuile.recu { border-color:#52b788; background:#f0faf3; }
+  .piece-tuile.manquant { border-color:#f4a261; background:#fff8f0; }
+  .piece-icone { font-size:30px; line-height:1; }
+  .piece-titre { font-weight:700; font-size:15px; }
+  .piece-membre { font-size:13px; color:var(--gray); margin:2px 0 6px; }
+  .piece-etat { font-size:13px; font-weight:600; }
+  .piece-tuile.recu .piece-etat { color:#1b5e20; }
+  .piece-tuile.manquant .piece-etat { color:#b45309; }
+  .piece-envoyer { margin-top:8px; padding:6px 10px; border-radius:8px; border:1px solid #f4a261; background:#fff; font-size:13px; cursor:pointer; }
 </style>
 </head>
 <body>
@@ -11229,9 +11247,19 @@ function afficherApresIdentification(vue) {
 // ── 3. Consulter votre compte ──
 function afficherCompteFamille() {
   const d = _identFamille.dossier;
+  const j = d.justificatif || {};
+  const regle = !!j.regle;
   let html = '<div class="card">' + enteteFamille('compte');
-  if (d.statutPaiement) html += '<div style="margin:8px 0 4px;font-size:14px;">💳 Règlement : <strong>' + escHtml(d.statutPaiement) + '</strong></div>';
+  if (d.statutPaiement) {
+    html += '<div class="compte-badge ' + (regle ? 'ok' : 'attente') + '">' + (regle ? '✅' : '⏳') + ' Règlement : <strong>'
+      + escHtml(d.statutPaiement.replace(/^[✅⏳💳🗑\s]+/u, '')) + '</strong></div>';
+  }
   html += '</div>';
+
+  // Pièces du dossier : contrôle de présence dans le Drive du FRI (chargé juste après)
+  html += '<div class="card"><div class="card-title">📁 Mes documents reçus par le FRI</div>'
+    + '<div id="compte-pieces"><div class="compte-chargement">⏳ Vérification des documents dans le Drive du FRI…</div></div></div>';
+
   (d.membres || []).forEach(m => {
     html += '<div class="card"><div class="card-title">👤 ' + escHtml((m.prenom + ' ' + m.nom).trim()) + '</div>';
     (m.activites || []).forEach(a => {
@@ -11244,10 +11272,194 @@ function afficherCompteFamille() {
     });
     html += '</div>';
   });
+
+  // Justificatif de règlement (employeur, comité d'entreprise…)
+  html += '<div class="card"><div class="card-title">🧾 Justificatif de règlement</div>';
+  if (regle) {
+    html += '<p style="font-size:14px;margin:0 0 12px;">Attestation de paiement à remettre à votre employeur ou à votre comité d\'entreprise. '
+      + 'Montant réglé : <strong>' + Number(j.total || 0).toFixed(2).replace('.', ',') + ' €</strong>.</p>'
+      + '<button type="button" class="btn btn-primary" onclick="telechargerJustificatif()">⬇️ Télécharger le justificatif (PDF)</button>';
+  } else {
+    html += '<p style="font-size:14px;margin:0;color:var(--gray);">⏳ Le justificatif sera disponible dès que le règlement de toutes vos activités aura été validé par le FRI.</p>';
+  }
+  html += '</div>';
+
   html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px;">'
     + '<button type="button" class="btn btn-secondary" onclick="ouvrirVue(\'modifier\')">🔄 Modifier mes activités</button>'
     + '<button type="button" class="btn btn-secondary" onclick="ouvrirVue(\'documents\')">📄 Envoyer des documents</button></div>';
   document.getElementById('compte-resultat').innerHTML = html;
+  chargerPiecesCompte();
+}
+
+const LIB_PIECES = {
+  QS:     { icone: '🩺', titre: 'Questionnaire de santé' },
+  CERTIF: { icone: '📋', titre: 'Certificat médical' },
+  RI:     { icone: '📜', titre: 'Règlement intérieur signé' }
+};
+
+async function chargerPiecesCompte() {
+  const bloc = document.getElementById('compte-pieces');
+  if (!bloc || !_identFamille) return;
+  let pieces = null;
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'piecesFamille', code: _identFamille.code, email: _identFamille.email });
+    const d = (r && r.data) ? nettoyerTexteRecu(r.data) : null;
+    if (d && d.status === 'ok' && Array.isArray(d.pieces)) pieces = d.pieces;
+  } catch(e) {}
+  if (!document.body.contains(bloc)) return;
+  if (!pieces) {
+    bloc.innerHTML = '<div class="compte-chargement">⚠️ Vérification impossible pour le moment. '
+      + '<button type="button" class="lien-retour" style="margin:0" onclick="chargerPiecesCompte()">Réessayer</button></div>';
+    return;
+  }
+  if (!pieces.length) { bloc.innerHTML = '<div class="compte-chargement">Aucun document attendu pour ce dossier.</div>'; return; }
+  const nbRecus = pieces.filter(p => p.recu).length;
+  const pct = Math.round(nbRecus * 100 / pieces.length);
+  let html = '<div class="pieces-resume"><div><strong>' + nbRecus + ' / ' + pieces.length + '</strong> document' + (pieces.length > 1 ? 's' : '') + ' reçu' + (nbRecus > 1 ? 's' : '')
+    + (nbRecus === pieces.length ? ' — votre dossier est complet 🎉' : '') + '</div>'
+    + '<div class="pieces-barre" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + pct + '%"></span></div></div>'
+    + '<div class="pieces-grille">';
+  pieces.forEach(p => {
+    const lib = LIB_PIECES[p.type] || { icone: '📄', titre: p.label };
+    const membre = p.membre ? escHtml(p.membre.replace(/\s+/g, ' ')) : 'Dossier familial';
+    html += '<div class="piece-tuile ' + (p.recu ? 'recu' : 'manquant') + '">'
+      + '<div class="piece-icone" aria-hidden="true">' + lib.icone + '</div>'
+      + '<div class="piece-texte"><div class="piece-titre">' + escHtml(lib.titre) + '</div>'
+      + '<div class="piece-membre">' + membre + '</div>'
+      + '<div class="piece-etat">' + (p.recu ? '✅ Reçu par le FRI — enregistré dans le Drive' : '⏳ Pas encore reçu') + '</div>'
+      + (p.recu ? '' : '<button type="button" class="piece-envoyer" onclick="ouvrirVue(\'documents\')">📤 Envoyer ce document</button>')
+      + '</div></div>';
+  });
+  html += '</div>';
+  bloc.innerHTML = html;
+}
+
+// ── Justificatif de règlement (modèle « Facture de paiement d'adhésion ») ──
+// Cachet et signature : coller ici les images (data:image/png;base64,…) quand elles seront fournies.
+const JUSTIF_SAISON = '2026-2027';
+const JUSTIF_PERIODE = 'du 07 septembre 2026 au 26 juin 2027';
+const JUSTIF_PRESIDENTE = 'Suzanne Le Meur';
+const JUSTIF_IMG_SIGNATURE = '';
+const JUSTIF_IMG_CACHET = '';
+
+async function chargerJsPDF() {
+  if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+  if (window.jsPDF) return window.jsPDF;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = () => { const c = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF; c ? resolve(c) : reject(new Error('jsPDF introuvable')); };
+    s.onerror = () => reject(new Error('Impossible de charger la librairie PDF'));
+    document.head.appendChild(s);
+  });
+}
+
+async function telechargerJustificatif() {
+  const d = _identFamille && _identFamille.dossier;
+  const j = d && d.justificatif;
+  if (!j || !j.regle) { showToast('Justificatif disponible après validation du règlement', 'orange'); return; }
+  let jsPDF;
+  try { jsPDF = await chargerJsPDF(); } catch(e) { showToast('❌ ' + e.message, 'red'); return; }
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const euro = v => Number(v || 0).toFixed(2).replace('.', ',') + ' €';
+  const vert = [26, 46, 34];
+  let y;
+
+  // En-tête
+  try { const logo = document.querySelector('.logo img'); if (logo && logo.src.startsWith('data:image')) doc.addImage(logo.src, 'JPEG', 170, 8, 24, 24); } catch(e) {}
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(15); doc.setTextColor(0);
+  doc.text("FACTURE DE PAIEMENT D'ADHÉSION", 95, 17, { align: 'center' });
+  doc.setFontSize(12); doc.text(JUSTIF_SAISON, 95, 24, { align: 'center' });
+  doc.setFontSize(9); doc.setTextColor(90);
+  doc.text('Dossier ' + d.code + ' — émise le ' + new Date().toLocaleDateString('fr-FR'), 95, 30, { align: 'center' });
+  doc.setTextColor(0);
+
+  const titreCadre = (t, y0, h) => {
+    doc.setDrawColor(0); doc.setLineWidth(0.3); doc.rect(16, y0, 178, h);
+    doc.setFillColor(...vert); doc.rect(16, y0, 178, 7, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(255);
+    doc.text(t, 105, y0 + 5, { align: 'center' });
+    doc.setTextColor(0); doc.setFont('helvetica', 'normal');
+  };
+  const champ = (lib, val, x, yy) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.text(lib + ' :', x, yy);
+    doc.setFont('helvetica', 'bold'); doc.text(String(val || ''), x + doc.getTextWidth(lib + ' : ') + 1, yy);
+    doc.setFont('helvetica', 'normal');
+  };
+
+  // Partie adhérent
+  const lignesAct = [];
+  (d.membres || []).forEach(m => (m.activites || []).forEach(a => {
+    if (/supprim|attente/i.test(a.statut)) return;
+    lignesAct.push([(m.prenom + ' ' + m.nom).trim(), String(a.nom || '').replace(/\n/g, ' — '), a.jour || '', a.heure || '']);
+  }));
+  const hAdh = 59 + lignesAct.length * 5.5;
+  y = 36; titreCadre("PARTIE ADHÉRENT", y, hAdh);
+  // Identité : le responsable du dossier (celui qui règle), sinon le premier membre
+  const resp = (j.responsable || '').trim().split(/\s+/);
+  const prenomR = resp.length > 1 ? resp[0] : (j.prenom || '');
+  const nomR = resp.length > 1 ? resp.slice(1).join(' ') : (j.nom || '');
+  y += 14;
+  champ('Nom', nomR.toUpperCase(), 22, y); champ('Prénom', prenomR, 112, y);
+  y += 7; champ('Adresse', j.adresse, 22, y);
+  y += 7; champ('Code postal', j.cp, 22, y); champ('Ville', j.ville, 112, y);
+  y += 7; champ('Tél', j.tel, 22, y); champ('Portable', j.portable, 112, y);
+  y += 7; champ('Mail', j.email, 22, y);
+  y += 8; doc.setFontSize(10); doc.text('Activité(s) :', 22, y);
+  y += 5; doc.setFontSize(8.5); doc.setTextColor(90);
+  doc.text('Membre', 24, y); doc.text('Activité', 66, y); doc.text('Jour', 150, y); doc.text('Heure', 172, y);
+  doc.setTextColor(0); doc.setFontSize(9);
+  lignesAct.forEach(l => {
+    y += 5.5;
+    doc.text(doc.splitTextToSize(l[0], 40)[0], 24, y);
+    doc.text(doc.splitTextToSize(l[1], 82)[0], 66, y);
+    doc.text(l[2], 150, y); doc.text(doc.splitTextToSize(l[3], 22)[0], 172, y);
+  });
+
+  // Partie Foyer Rural
+  y = 36 + hAdh + 6;
+  const y0 = y; titreCadre('PARTIE FOYER RURAL', y, 150);
+  y += 13; doc.setFontSize(10);
+  ['Raison sociale', 'Foyer Rural Isneauville', 'Mairie', '76230 ISNEAUVILLE', '02.35.59.01.01'].forEach((t, i) => { doc.text(t, 22, y + i * 5); });
+  y += 32;
+  const ligneMontant = (lib, val, gras) => {
+    doc.setFont('helvetica', gras ? 'bold' : 'normal'); doc.setFontSize(10); doc.text(lib, 22, y);
+    doc.rect(150, y - 4.5, 38, 6.5); doc.text(val, 186, y, { align: 'right' }); y += 9;
+  };
+  ligneMontant("Coût annuel de l'inscription aux activités", euro(j.activites));
+  ligneMontant('Aide' + (j.libAides ? ' (' + j.libAides + ')' : " (Pass'Jeunes, Pass'Sport, Atout Normandie…)"), j.aides ? '- ' + euro(j.aides) : euro(0));
+  ligneMontant('Licence / adhésion', euro(j.licence));
+  ligneMontant('TOTAL RÉGLÉ', euro(j.total), true);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  doc.text('Mode de règlement :', 22, y);
+  const modes = j.modes || [];
+  [['especes', 'Espèces', 62], ['cheques', 'Chèques', 88], ['carte', 'Carte bancaire', 114], ['coupons', 'Coupon sports / autres', 148]].forEach(([k, lib, x]) => {
+    doc.rect(x, y - 3.2, 3.5, 3.5);
+    if (modes.includes(k)) { doc.setFont('helvetica', 'bold'); doc.text('X', x + 0.6, y - 0.1); doc.setFont('helvetica', 'normal'); }
+    doc.text(lib, x + 5, y);
+  });
+  y += 10; doc.setFont('helvetica', 'italic'); doc.setFontSize(9.5);
+  const nomAdh = ((j.prenom || '') + ' ' + (j.nom || '').toUpperCase()).trim();
+  const membres = (d.membres || []).map(m => (m.prenom + ' ' + (m.nom || '').toUpperCase()).trim());
+  const qui = membres.length > 1 ? 'les adhérents ' + membres.join(', ') + ' sont bien inscrits' : "l'adhérent " + (membres[0] || nomAdh) + ' est bien inscrit';
+  const attest = 'Je soussignée, ' + JUSTIF_PRESIDENTE + ' agissant en qualité de Présidente, certifie que ' + qui
+    + ' dans notre association pour la période ' + JUSTIF_PERIODE + ', et que le montant total des activités a bien été réglé.';
+  doc.splitTextToSize(attest, 166).forEach(l => { doc.text(l, 22, y); y += 5; });
+  y += 2; doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  doc.rect(22, y, 74, 30); doc.rect(116, y, 72, 30);
+  doc.text('Date et signature de la Présidente', 59, y + 5, { align: 'center' });
+  doc.text(JUSTIF_PRESIDENTE.toUpperCase(), 59, y + 10, { align: 'center' });
+  doc.text("Cachet de l'association", 152, y + 5, { align: 'center' });
+  try { if (JUSTIF_IMG_SIGNATURE) doc.addImage(JUSTIF_IMG_SIGNATURE, 34, y + 12, 50, 16); } catch(e) {}
+  try { if (JUSTIF_IMG_CACHET) doc.addImage(JUSTIF_IMG_CACHET, 135, y + 7, 34, 22); } catch(e) {}
+  y += 38; doc.setFont('helvetica', 'bold'); doc.text('Cette attestation fait office de facture', 22, y);
+
+  // Pied de page
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(60);
+  doc.text('Association loi 1901. Code APE : 94.99Z E. SIREN : 78106878800012. Association affiliée à la FNSMR et la FFTT.', 105, 284, { align: 'center' });
+  doc.text('Courrier : Foyer Rural Isneauville Mairie 76230 ISNEAUVILLE - Tél : 06.80.78.95.77 - Courriel : frisneauville@orange.fr', 105, 288, { align: 'center' });
+  doc.save('Justificatif_reglement_' + d.code + '.pdf');
+  showToast('✅ Justificatif téléchargé', 'green');
 }
 
 // ── 4. Modifier vos activités (demande transmise à l'admin) ──

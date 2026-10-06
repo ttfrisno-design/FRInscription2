@@ -2191,6 +2191,9 @@ function traiterRequete(e) {
       var resCD = lireDossierFamille(payload.code, payload.email);
       return repondreAvecCb(resCD,null,null,callback);
     }
+    if(payload.action==='piecesFamille'){
+      return repondreAvecCb(piecesFamilleGAS(payload.code, payload.email),null,null,callback);
+    }
     // ── Espace famille : demande de modification des activités (traitée par l'admin) ──
     if(payload.action==='demanderModification'){
       return repondreAvecCb(demanderModificationGAS(payload),null,null,callback);
@@ -3060,8 +3063,79 @@ function lireDossierFamille(codeBrut, emailBrut) {
     responsable: lireResponsable(r0) || String(r0[36] || '').trim(),
     email: String(r0[15] || '').trim(),
     statutPaiement: String(r0[21] || '').trim(),
-    membres: ordre.map(function(k) { return membres[k]; })
+    membres: ordre.map(function(k) { return membres[k]; }),
+    justificatif: _donneesJustificatif(code, lignes)
   }};
+}
+
+// ── Justificatif de règlement (facture d'adhésion pour l'employeur / CE) ──
+// Disponible quand toutes les activités actives du dossier sont réglées.
+// Coût des activités (remise famille comprise), licence/adhésion FNSMR, aides publiques
+// (Pass'Jeunes, Atout Normandie, Pass'Sport) ; les coupons ANCV et avoirs sont des moyens de règlement.
+function _estStatutRegle(st) {
+  var s = String(st || '').toLowerCase();
+  if (s.indexOf('attente') >= 0 || s.indexOf('cours') >= 0 || s.indexOf('à valider') >= 0) return false;
+  return s.indexOf('validé') >= 0 || s.indexOf('payé') >= 0 || s.indexOf('réglé') >= 0;
+}
+
+function _donneesJustificatif(code, lignes) {
+  try {
+    var actives = lignes.filter(function(r) {
+      var st = lireStatutInscription(r).toLowerCase();
+      return st.indexOf('supprim') < 0 && st.indexOf('attente') < 0;
+    });
+    if (!actives.length) return {regle: false};
+    var regle = actives.every(function(r) { return _estStatutRegle(r[21]); });
+    var r0 = actives[0];
+    var calc = lireLignesRestantes(SpreadsheetApp.openById(SHEET_ID), code, null);
+    var licence = Math.round(((calc.fnsmr || 0) + (calc.fftt || 0)) * 100) / 100;
+    var activites = Math.round(((calc.totalNet || 0) - licence) * 100) / 100;
+    // Aides : montant le plus élevé trouvé par type (la même chaîne est recopiée sur chaque ligne)
+    var aidesMax = {PassJeunes: 0, Atout: 0, PASS: 0, ANCV: 0}, avoir = 0;
+    actives.forEach(function(r) {
+      var pa = String(r[35] || '');
+      Object.keys(aidesMax).forEach(function(t) {
+        var m = pa.match(new RegExp('(?:^|\\|)' + t + ':([\\d.]+)'));
+        if (m) aidesMax[t] = Math.max(aidesMax[t], parseFloat(m[1]) || 0);
+      });
+      avoir = Math.max(avoir, Number(r[33]) || 0);
+    });
+    var aides = Math.round((aidesMax.PassJeunes + aidesMax.Atout + aidesMax.PASS) * 100) / 100;
+    var libAides = [];
+    if (aidesMax.PassJeunes) libAides.push("Pass'Jeunes");
+    if (aidesMax.Atout) libAides.push('Atout Normandie');
+    if (aidesMax.PASS) libAides.push("Pass'Sport");
+    // Modes de règlement : colonne « Mode paiement » + libellé du statut (« ✅ Règlement validé — Chèque »)
+    var modes = {};
+    actives.forEach(function(r) {
+      var m = String(r[32] || '').toLowerCase() + ' ' + String(r[21] || '').toLowerCase();
+      if (m.indexOf('espèce') >= 0 || m.indexOf('espece') >= 0) modes.especes = true;
+      if (m.indexOf('chèque') >= 0 || m.indexOf('cheque') >= 0) modes.cheques = true;
+      if (m.indexOf('helloasso') >= 0 || m.indexOf('carte') >= 0) modes.carte = true;
+    });
+    if (aidesMax.ANCV || avoir) modes.coupons = true;
+    return {
+      regle: regle,
+      nom: String(r0[2] || '').trim(), prenom: String(r0[3] || '').trim(),
+      responsable: lireResponsable(r0),
+      adresse: String(r0[7] || '').trim(), cp: String(r0[9] || '').trim(), ville: String(r0[10] || '').trim(),
+      tel: String(r0[13] || '').trim(), portable: String(r0[14] || '').trim(),
+      email: String(r0[15] || '').trim(),
+      activites: activites, licence: licence, aides: aides, libAides: libAides.join(', '),
+      total: Math.max(0, Math.round((activites + licence - aides) * 100) / 100),
+      modes: Object.keys(modes)
+    };
+  } catch(e) {
+    Logger.log('_donneesJustificatif KO : ' + e);
+    return {regle: false};
+  }
+}
+
+// Pièces reçues pour l'espace famille (contrôle de présence dans le Drive, même logique que l'admin)
+function piecesFamilleGAS(codeBrut, emailBrut) {
+  var lecture = lireDossierFamille(codeBrut, emailBrut);
+  if (lecture.status !== 'ok') return lecture;
+  return controlerPiecesDossier(lecture.dossier.code);
 }
 
 // ── Contrôle automatique des pièces d'un dossier (console admin, rappel pièces manquantes) ──

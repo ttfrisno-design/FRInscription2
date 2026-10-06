@@ -2026,6 +2026,9 @@ function traiterRequete(e) {
       var resSA=supprimerActiviteGAS(String(payload.code||'').trim(),payload.actNom||'',payload.actId||'',payload.membreNom||'',payload.placesId||'',payload.commentaireAdmin||'',payload.montantModifie===true||payload.montantModifie==='true',parseFloat(payload.avoir)||0);
       return repondreAvecCb(resSA,null,null,callback);
     }
+    if(payload.action==='statsRemises'){
+      return repondreAvecCb(calculerRemisesFamille(),null,null,callback);
+    }
     if(payload.action==='simulerSuppressionActivite'){
       return repondreAvecCb(simulerSuppressionActiviteGAS(payload),null,null,callback);
     }
@@ -2553,7 +2556,7 @@ var ACTIONS_ADMIN = [
   'creerAvoirManuel', 'creerRemboursementManuel', 'envoyerRappelManuel', 'envoyerRappelPieces',
   'exportGestafillSheet', 'genererPDFInscriptionAdmin', 'getStatsTresorier',
   'getJournalSauvegardes', 'viderJournalSauvegardes', 'verifierDossiersPerdus',
-  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle', 'simulerSuppressionActivite',
+  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle', 'simulerSuppressionActivite', 'statsRemises',
   'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
   'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques',
   'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier',
@@ -3157,6 +3160,42 @@ function piecesFamilleGAS(codeBrut, emailBrut) {
   var lecture = lireDossierFamille(codeBrut, emailBrut);
   if (lecture.status !== 'ok') return lecture;
   return controlerPiecesDossier(lecture.dossier.code);
+}
+
+// ── Montant total des remises famille 15 % accordées (console admin, ou à lancer depuis l'éditeur) ──
+// Même règle que le calcul des dossiers : un dossier qui compte au moins 3 activités éligibles
+// (colonne « Éligible remise » = 1, hors liste d'attente et lignes supprimées) a 15 % sur chacune d'elles.
+function calculerRemisesFamille() {
+  var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+  var vide = {status:'ok', total: 0, totalRegle: 0, nbDossiers: 0, nbDossiersRegles: 0, nbActivites: 0, totalBrutEligible: 0};
+  if (!sh || sh.getLastRow() < 2) return vide;
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, 41).getValues();
+  var dossiers = {};
+  data.forEach(function(r) {
+    var code = String(r[19] || '').trim();
+    if (!code) return;
+    var st = lireStatutInscription(r).toLowerCase();
+    if (st.indexOf('supprim') >= 0 || st.indexOf('attente') >= 0) return;
+    if (String(r[21] || '').toLowerCase().indexOf('supprim') >= 0) return;
+    var d = dossiers[code] || (dossiers[code] = {elig: [], regle: true});
+    if (!_estStatutRegle(r[21])) d.regle = false;
+    if (Number(r[28]) === 1) d.elig.push(Number(r[27]) || 0);
+  });
+  var res = vide;
+  Object.keys(dossiers).forEach(function(code) {
+    var d = dossiers[code];
+    if (d.elig.length < 3) return;
+    var remise = d.elig.reduce(function(t, b) { return t + Math.round(b * 0.15 * 100) / 100; }, 0);
+    res.total += remise;
+    res.nbDossiers++;
+    res.nbActivites += d.elig.length;
+    res.totalBrutEligible += d.elig.reduce(function(t, b) { return t + b; }, 0);
+    if (d.regle) { res.totalRegle += remise; res.nbDossiersRegles++; }
+  });
+  ['total', 'totalRegle', 'totalBrutEligible'].forEach(function(k) { res[k] = Math.round(res[k] * 100) / 100; });
+  Logger.log('Remises famille 15 % : ' + res.total + ' € sur ' + res.nbDossiers + ' dossier(s), '
+    + res.nbActivites + ' activité(s) ; dont dossiers réglés : ' + res.totalRegle + ' € (' + res.nbDossiersRegles + ' dossier(s))');
+  return res;
 }
 
 // ── Contrôle automatique des pièces d'un dossier (console admin, rappel pièces manquantes) ──

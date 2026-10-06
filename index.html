@@ -8074,7 +8074,20 @@ function requireAdmin() {
   return true;
 }
 
+// Total des remises famille 15 % : calculé par le serveur sur tout le Sheet, gardé 2 minutes
+let _statsRemises = null, _statsRemisesT = 0, _statsRemisesEnCours = false;
+async function chargerStatsRemises() {
+  if (_statsRemisesEnCours || (Date.now() - _statsRemisesT < 120000)) return;
+  _statsRemisesEnCours = true;
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'statsRemises' });
+    const d = r && r.data;
+    if (d && d.status === 'ok') { _statsRemises = d; _statsRemisesT = Date.now(); renderAdminStats(); }
+  } catch(e) {} finally { _statsRemisesEnCours = false; }
+}
+
 function renderAdminStats() {
+  if (typeof adminSessionToken !== 'undefined' && adminSessionToken) chargerStatsRemises();
   const regs = JSON.parse(localStorage.getItem('fri_registrations') || '[]');
   const totalMembers = regs.reduce((a,r) => a + r.members.length, 0);
   // Deduplicate linked pairs so TT activities count once
@@ -8104,11 +8117,13 @@ function renderAdminStats() {
     { label: 'Activités', value: totalActivities, icon: '🎯' },
     { label: 'Cotisations encaissées', value: totalRevenu + '€', icon: '💰' },
     { label: 'En attente paiement', value: nbPendingPay + (totalRevenuPending > 0 ? ' ('+totalRevenuPending+'€)' : ''), icon: '⏳', warn: nbPendingPay > 0 },
-    { label: 'Certificats requis', value: needCertif, icon: '⚠️', warn: needCertif > 0 }
+    { label: 'Certificats requis', value: needCertif, icon: '⚠️', warn: needCertif > 0 },
+    { label: 'Remises famille 15 %', value: _statsRemises ? Math.round(_statsRemises.total) + '€' : '…', icon: '🎁', id: 'stat-remises',
+      title: _statsRemises ? _statsRemises.nbDossiers + ' dossier(s), ' + _statsRemises.nbActivites + ' activité(s) — dont dossiers réglés : ' + _statsRemises.totalRegle.toFixed(2) + ' €' : '' }
   ];
 
   document.getElementById('admin-stats').innerHTML = stats.map(s => `
-    <div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:14px 16px;">
+    <div ${s.title ? 'title="' + escHtml(s.title) + '"' : ''} style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:14px 16px;">
       <div style="font-size:20px;margin-bottom:4px">${s.icon}</div>
       <div style="font-size:22px;font-weight:700;color:${s.warn?'#e8a048':'var(--green-light)'};">${s.value}</div>
       <div style="font-size:11px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.5px">${s.label}</div>

@@ -11315,7 +11315,7 @@ async function chargerPiecesCompte() {
   if (!pieces.length) { bloc.innerHTML = '<div class="compte-chargement">Aucun document attendu pour ce dossier.</div>'; return; }
   const nbRecus = pieces.filter(p => p.recu).length;
   const pct = Math.round(nbRecus * 100 / pieces.length);
-  let html = '<div class="pieces-resume"><div><strong>' + nbRecus + ' / ' + pieces.length + '</strong> document' + (pieces.length > 1 ? 's' : '') + ' reçu' + (nbRecus > 1 ? 's' : '')
+  let html = '<div class="pieces-resume"><div><strong>' + nbRecus + ' / ' + pieces.length + '</strong> document' + (pieces.length > 1 ? 's reçus' : ' reçu')
     + (nbRecus === pieces.length ? ' — votre dossier est complet 🎉' : '') + '</div>'
     + '<div class="pieces-barre" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><span style="width:' + pct + '%"></span></div></div>'
     + '<div class="pieces-grille">';

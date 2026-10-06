@@ -3148,22 +3148,37 @@ var DOSSIERS_CERTIF = ['1-Certificats médicaux'];
 
 // Identifiants des dossiers Drive mémorisés 6 h : évite une recherche par nom à chaque contrôle
 function _idsDossiersDrive(nd) {
-  var cache = CacheService.getScriptCache(), clef = 'dossier_ids_' + nomDossierDrive(nd);
+  var cache = CacheService.getScriptCache(), clef = 'dossier_ids2_' + nomDossierDrive(nd);
   var enCache = cache.get(clef);
   if (enCache !== null) return enCache ? enCache.split(',') : [];
   var ids = [], it = dossiersDriveParNom(nd);
   while (it.hasNext()) ids.push(it.next().getId());
-  cache.put(clef, ids.join(','), 21600);
+  if (ids.length) cache.put(clef, ids.join(','), 21600);
   return ids;
 }
 
+// Noms des fichiers d'un dossier Drive (majuscules), gardés 60 s.
+// On parcourt la liste plutôt que d'utiliser searchFiles('title contains …') : la recherche Drive
+// découpe les noms en mots et ne trouve pas « FRI-8N98 » dans « FRI-8N98_Gabie-…_QS-Sante.pdf ».
+function _nomsFichiersDossier(id) {
+  var cache = CacheService.getScriptCache(), clef = 'noms_fichiers_' + id;
+  var enCache = cache.get(clef);
+  if (enCache !== null) { try { return JSON.parse(enCache); } catch(e) {} }
+  var noms = [], it = DriveApp.getFolderById(id).getFiles();
+  while (it.hasNext()) {
+    var f = it.next();
+    if (!f.isTrashed()) noms.push(f.getName().toUpperCase());
+  }
+  try { var json = JSON.stringify(noms); if (json.length < 95000) cache.put(clef, json, 60); } catch(e) {}
+  return noms;
+}
+
 function _fichiersDuDossier(nomsDossiers, code) {
-  var noms = [];
+  var noms = [], c = String(code || '').toUpperCase();
   nomsDossiers.forEach(function(nd) {
     try {
       _idsDossiersDrive(nd).forEach(function(id) {
-        var f = DriveApp.getFolderById(id).searchFiles('title contains "' + code + '" and trashed = false');
-        while (f.hasNext()) noms.push(f.next().getName().toUpperCase());
+        _nomsFichiersDossier(id).forEach(function(n) { if (n.indexOf(c) >= 0) noms.push(n); });
       });
     } catch(e) { Logger.log('Recherche Drive ' + nd + ' KO : ' + e); }
   });

@@ -3148,11 +3148,16 @@ var DOSSIERS_CERTIF = ['1-Certificats médicaux'];
 
 // Identifiants des dossiers Drive mémorisés 6 h : évite une recherche par nom à chaque contrôle
 function _idsDossiersDrive(nd) {
-  var cache = CacheService.getScriptCache(), clef = 'dossier_ids2_' + nomDossierDrive(nd);
+  var cache = CacheService.getScriptCache(), clef = 'dossier_ids3_' + nomDossierDrive(nd);
   var enCache = cache.get(clef);
   if (enCache !== null) return enCache ? enCache.split(',') : [];
-  var ids = [], it = dossiersDriveParNom(nd);
-  while (it.hasNext()) ids.push(it.next().getId());
+  // En test : dossiers « TEST - … » ET dossiers sans préfixe (fichiers déposés avant le mode test)
+  var noms = MODE_TEST ? [nomDossierDrive(nd), nd] : [nd];
+  var ids = [];
+  noms.forEach(function(n) {
+    var it = DriveApp.getFoldersByName(n);
+    while (it.hasNext()) { var id = it.next().getId(); if (ids.indexOf(id) < 0) ids.push(id); }
+  });
   if (ids.length) cache.put(clef, ids.join(','), 21600);
   return ids;
 }
@@ -3183,6 +3188,43 @@ function _fichiersDuDossier(nomsDossiers, code) {
     } catch(e) { Logger.log('Recherche Drive ' + nd + ' KO : ' + e); }
   });
   return noms;
+}
+
+// Recherche globale par nom (index Drive) : complète le parcours des dossiers connus
+function _fichiersPartoutDansDrive(code) {
+  var noms = [];
+  try {
+    var it = DriveApp.searchFiles('title contains "' + code + '" and trashed = false');
+    while (it.hasNext() && noms.length < 50) noms.push(it.next().getName().toUpperCase());
+  } catch(e) { Logger.log('Recherche globale Drive KO : ' + e); }
+  return noms;
+}
+
+// À lancer depuis l'éditeur Apps Script (remplacer le code) : indique où sont les pièces d'un dossier
+function diagnostiquerPiecesDossier(code) {
+  code = String(code || 'FRI-8N98').toUpperCase();
+  Logger.log('Mode test : ' + MODE_TEST);
+  [['QS', DOSSIERS_QS], ['RI', DOSSIERS_RI], ['CERTIF', DOSSIERS_CERTIF]].forEach(function(g) {
+    g[1].forEach(function(nd) {
+      CacheService.getScriptCache().remove('dossier_ids3_' + nomDossierDrive(nd));
+      var ids = _idsDossiersDrive(nd);
+      Logger.log(g[0] + ' — dossier « ' + nd + ' » : ' + ids.length + ' dossier(s) trouvé(s)');
+      ids.forEach(function(id) {
+        var f = DriveApp.getFolderById(id);
+        CacheService.getScriptCache().remove('noms_fichiers_' + id);
+        var noms = _nomsFichiersDossier(id);
+        Logger.log('   « ' + f.getName() + ' » (' + id + ') : ' + noms.length + ' fichier(s), dont pour ' + code + ' : '
+          + JSON.stringify(noms.filter(function(n) { return n.indexOf(code) >= 0; })));
+      });
+    });
+  });
+  var it = DriveApp.searchFiles('title contains "' + code + '" and trashed = false');
+  while (it.hasNext()) {
+    var fi = it.next(), parents = [], p = fi.getParents();
+    while (p.hasNext()) parents.push(p.next().getName());
+    Logger.log('Recherche globale : ' + fi.getName() + ' → dans « ' + parents.join(', ') + ' »');
+  }
+  Logger.log('Résultat contrôle : ' + JSON.stringify(controlerPiecesDossier(code)));
 }
 
 // ── Suivi admin (coches « Reçu / Attente » des documents et règlements) ──
@@ -3256,6 +3298,12 @@ function controlerPiecesDossier(code) {
   });
   if (!ordre.length) return {status:'ok', pieces: []};
   var fQS = _fichiersDuDossier(DOSSIERS_QS, code), fRI = _fichiersDuDossier(DOSSIERS_RI, code), fCM = _fichiersDuDossier(DOSSIERS_CERTIF, code);
+  // Filet de sécurité : fichiers portant le code n'importe où dans le Drive (dossier renommé, déplacé…)
+  _fichiersPartoutDansDrive(code).forEach(function(n) {
+    if (/CERTIF/.test(n)) { if (fCM.indexOf(n) < 0) fCM.push(n); }
+    else if (/(^|[^A-Z])QS([^A-Z]|$)|SANTE|SANTÉ/.test(n)) { if (fQS.indexOf(n) < 0) fQS.push(n); }
+    else if (/^RI[_-]|REGLEMENT|RÈGLEMENT/.test(n)) { if (fRI.indexOf(n) < 0) fRI.push(n); }
+  });
   var norm = function(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z]/g, ''); };
   var contientMembre = function(liste, m) {
     var p = norm(m.prenom), n = norm(m.nom);

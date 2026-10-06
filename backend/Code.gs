@@ -1197,8 +1197,7 @@ function doPost(e) {
     }
     if(payload.action==='ajouterActiviteDossier'){
       if(!verifierTokenAdmin(payload._adminToken))return ContentService.createTextOutput(JSON.stringify(REPONSE_ADMIN_REQUISE)).setMimeType(ContentService.MimeType.JSON);
-      var result4=ajouterActiviteDossierSheet(payload);
-      return ContentService.createTextOutput(JSON.stringify({status:'ok',inserted:result4.inserted})).setMimeType(ContentService.MimeType.JSON);
+      return ContentService.createTextOutput(JSON.stringify(ajouterActiviteDossierSheet(payload))).setMimeType(ContentService.MimeType.JSON);
     }
     return traiterRequete({parameter:{payload:body}});
   }catch(err){
@@ -1545,6 +1544,9 @@ function traiterRequete(e) {
             tarif_brut: parseFloat(r[27])||0,
             tarif: parseFloat(r[27])||0,
             statut: statut,
+            statut_paiement: String(r[21]||''),
+            regle: _estStatutRegle(r[21]),
+            sexe: lireSexe(r),
             jour: String(r[23]||''),
             heure: String(r[24]||''),
             lieu: String(r[25]||'')
@@ -1555,6 +1557,8 @@ function traiterRequete(e) {
     }
 
     if(payload.action==='modifierActivite'){
+      var lockMod = LockService.getScriptLock();
+      if(!lockMod.tryLock(30000)) return repondreAvecCb({status:'error',message:'Serveur occupé, réessayez dans un instant.'},null,null,callback);
       try{
         var ss3 = SpreadsheetApp.openById(SHEET_ID);
         var shMod = ss3.getSheetByName(SHEET_INSCRIPTIONS);
@@ -1586,18 +1590,37 @@ function traiterRequete(e) {
         var rowsUpdated = 0;
         var emailRow = null;
         var shRow = -1;
+        // Total dû AVANT la modification (remise famille comprise) : la différence réelle en découle
+        var totalAvantMod = lireLignesRestantes(ss3, codeM, null).totalNet || 0;
+        // Ligne visée : même membre, ID d'activité d'abord, nom exact seulement si aucun ID ne correspond
+        var idxMod = -1, idxNom = -1;
+        for(var mj=0; mj<dataM.length; mj++){
+          var rj = dataM[mj];
+          if(String(rj[19]||'').trim() !== codeM) continue;
+          if(_normTxt(rj[2]) !== _normTxt(memNom) || _normTxt(rj[3]) !== _normTxt(memPrenom)) continue;
+          if(lireStatutInscription(rj).toLowerCase().indexOf('supprim')>=0) continue;
+          if(lireActiviteId(rj) === oldActId){ idxMod = mj; break; }
+          if(idxNom < 0 && oldActNom && String(rj[22]||'').trim() === oldActNom) idxNom = mj;
+        }
+        if(idxMod < 0) idxMod = idxNom;
+        // Nouvelle activité complète ? (onglet Places : colonne E = places restantes)
+        var newComplet = false;
+        try {
+          var plChk = ss3.getSheetByName(SHEET_PLACES);
+          if(plChk && plChk.getLastRow()>1){
+            var plChkD = plChk.getRange(2,1,plChk.getLastRow()-1,5).getValues();
+            for(var pc=0; pc<plChkD.length; pc++){
+              if(String(plChkD[pc][0]||'').trim()===newActId && newActId!==oldActId){ newComplet = (parseInt(plChkD[pc][4])||0) <= 0; break; }
+            }
+          }
+        } catch(ePc){}
+        var oldEnAttente = false, newEnAttente = false;
 
-        for(var mi=0; mi<dataM.length; mi++){
+        for(var mi=(idxMod<0?dataM.length:idxMod); mi<dataM.length; mi++){
           var rm = dataM[mi];
-          if(String(rm[19]||'').trim() !== codeM) continue;
-          if(String(rm[2]||'').trim().toUpperCase() !== memNom) continue;
-          if(String(rm[3]||'').trim().toLowerCase() !== memPrenom.toLowerCase()) continue;
-          var statut = lireStatutInscription(rm);
-          if(statut.toLowerCase().indexOf('supprim')>=0) continue;
-          var actIdM = lireActiviteId(rm);
           var actNomM = String(rm[22]||'').trim();
-          var matchAct = (actIdM === oldActId) || (oldActNom && actNomM === oldActNom);
-          if(!matchAct) continue;
+          oldEnAttente = lireStatutInscription(rm).toLowerCase().indexOf('attente')>=0;
+          newEnAttente = newComplet || (oldEnAttente && newActId===oldActId);
 
           shRow = mi + 2;
           // ── Mise à jour onglet Inscriptions ──
@@ -1630,18 +1653,19 @@ function traiterRequete(e) {
           shMod.getRange(shRow, colActId).setValue(newActId);
           // Couleur mauve claire sur toute la ligne
           shMod.getRange(shRow, 1, 1, 41).setBackground('#e1bee7');
-          // Col 40 AN = Statut inscription
-          shMod.getRange(shRow, 40).setValue('✅ Modifié — ' + Utilities.formatDate(new Date(),'Europe/Paris','dd/MM/yyyy'))
-            .setFontColor('#6a1b9a').setFontWeight('bold');
+          // Statut inscription (colonne selon la structure de la ligne) ; activité complète → liste d'attente
+          shMod.getRange(shRow, _colStatutInscription(rm)).setValue(newEnAttente
+              ? '⏳ En attente de place'
+              : '✅ Modifié — ' + Utilities.formatDate(new Date(),'Europe/Paris','dd/MM/yyyy'))
+            .setFontColor(newEnAttente ? '#e65100' : '#6a1b9a').setFontWeight('bold');
           rowsUpdated++;
           // isPaid : basé sur le STATUT DE PAIEMENT réel (col 22 / index 21),
           // PAS sur le statut d'inscription structurel (col AN/AL, lireStatutInscription).
           // Ce dernier passe à "✅ Inscrit" dès qu'une bascule liste d'attente
           // a eu lieu, indépendamment du règlement -- l'utiliser ici donnait de
           // faux positifs "réglé".
-          var statutPaiementActuel = String(rm[21]||'').toLowerCase();
-          isPaid = statutPaiementActuel.indexOf('valid\u00e9') >= 0
-                || statutPaiementActuel.indexOf('pay\u00e9') >= 0;
+          isPaid = _estStatutRegle(rm[21]);
+          var statutPaiementActuel = String(rm[21]||'');
           Logger.log('isPaid='+isPaid+' statutPaiement=['+statutPaiementActuel+']');
           emailRow = {
             code:      codeM,
@@ -1666,10 +1690,16 @@ function traiterRequete(e) {
 
         SpreadsheetApp.flush();
 
-        // ── Recalcul total famille via calcTotalFamille (met \u00e0 jour AF=32) ──
+        // ── Recalcul remise + total famille (met \u00e0 jour AF=32) ──
+        try { recalculerRemiseDossier(ss3, codeM); } catch(erm) { Logger.log('Recalcul remise KO: '+erm); }
         var totalNet = 0;
         try { totalNet = calcTotalFamille(ss3, codeM); }
         catch(etf) { Logger.log('calcTotalFamille KO: '+etf); }
+        // Différence réelle = nouveau total dû − total dû avant (remise famille recalculée)
+        var totalApresMod = lireLignesRestantes(ss3, codeM, null).totalNet || 0;
+        if(!totalNet) totalNet = totalApresMod;
+        diff = Math.round((totalApresMod - totalAvantMod) * 100) / 100;
+        if(emailRow) emailRow.diff = diff;
 
         // ── Mettre \u00e0 jour le R\u00e9capitulatif (col I=9 et col M=13) ──
         try {
@@ -1681,7 +1711,8 @@ function traiterRequete(e) {
               if(!hasCode) continue;
               recapSh.getRange(rr+2, 9).setValue(totalNet).setFontColor('#1565c0').setFontWeight('bold');  // col I = Total
               // col M = Activit\u00e9s (concat des activit\u00e9s du dossier)
-              var actsConcat = dataM.filter(function(r){
+              var dataRecap = shMod.getRange(2,1,Math.max(shMod.getLastRow()-1,1),41).getValues();
+              var actsConcat = dataRecap.filter(function(r){
                 return String(r[19]||'').trim()===codeM && lireStatutInscription(r).toLowerCase().indexOf('supprim')<0;
               }).map(function(r){ return String(r[22]||''); }).join(', ');
               recapSh.getRange(rr+2, 13).setValue(actsConcat).setFontColor('#2d6a4f');
@@ -1691,45 +1722,16 @@ function traiterRequete(e) {
           }
         } catch(eR){ Logger.log('Recap MAJ KO: '+eR); }
 
-        // ── Supprimer la ligne de l'ancienne activité ──
-        try {
-          var oldSh = ss3.getSheetByName(oldActId);
-          if(oldSh && oldSh.getLastRow()>1){
-            var oldData2 = oldSh.getRange(2,1,oldSh.getLastRow()-1,5).getValues();
-            for(var oi=0; oi<oldData2.length; oi++){
-              if(String(oldData2[oi][0]||'').trim()!==codeM) continue;
-              var oldMemNomRow = (String(oldData2[oi][3]||'')+' '+String(oldData2[oi][4]||'')).toUpperCase();
-              if(oldMemNomRow.indexOf(memNom)<0) continue;
-              oldSh.deleteRow(oi+2); // Suppression physique
-              Logger.log('✅ Ligne supprimée de onglet: '+oldActId);
-              break;
-            }
-          }
-        } catch(eOld){ Logger.log('Onglet ancienne act KO: '+eOld); }
-
-        // ── Mettre à jour les places ──
-        try {
-          var plSh = ss3.getSheetByName(SHEET_PLACES);
-          if(plSh && plSh.getLastRow()>1){
-            var plData = plSh.getRange(2,1,plSh.getLastRow()-1,6).getValues();
-            for(var pli=0; pli<plData.length; pli++){
-              var plId = String(plData[pli][0]||'').trim();
-              if(plId===oldActId){
-                plSh.getRange(pli+2,3).setValue(Math.max(0,parseInt(plData[pli][2]||0))+1); // dispo +1
-                plSh.getRange(pli+2,4).setValue(Math.max(0,parseInt(plData[pli][3]||0))-1); // inscrits -1
-                Logger.log('✅ Place libérée: '+oldActId);
-              }
-              if(plId===newActId){
-                plSh.getRange(pli+2,3).setValue(Math.max(0,parseInt(plData[pli][2]||0))-1); // dispo -1
-                plSh.getRange(pli+2,4).setValue(parseInt(plData[pli][3]||0)+1); // inscrits +1
-                Logger.log('✅ Place prise: '+newActId);
-              }
-            }
-          }
-        } catch(ePlaces){ Logger.log('Places MAJ KO: '+ePlaces); }
+        // ── Ancienne activité : retirer le membre de l'onglet et libérer sa place (sauf liste d'attente) ──
+        if(!oldEnAttente){
+          _retirerDeOngletActivite(ss3, oldActId, codeM, emailRow ? emailRow.memNom : memNom, emailRow ? emailRow.memPrenom : memPrenom);
+          _majPlaces(ss3, oldActId, -1);
+        }
+        // ── Nouvelle activité : prendre une place (sauf liste d'attente) ──
+        if(!newEnAttente) _majPlaces(ss3, newActId, +1);
 
         // ── Ajouter le membre dans l'onglet de la nouvelle activité ──
-        try {
+        if(!newEnAttente) try {
           var newSh = ss3.getSheetByName(newActId);
           if(!newSh) {
             newSh = ss3.insertSheet(newActId);
@@ -1756,8 +1758,10 @@ function traiterRequete(e) {
 
         // ── Mettre \u00e0 jour l'onglet du moyen de paiement ──
         try {
-          if(modeP && (modeP.toLowerCase().indexOf('cheque')>=0 || modeP.toLowerCase().indexOf('esp')>=0)){
-            var payShName = modeP.toLowerCase().indexOf('cheque')>=0 ? 'Cheques 1' : '\u0045sp\u00e8ces';
+          // Dossier déjà réglé : chèque encaissé / espèces reçues → on ne touche pas au montant (avoir ou complément à part)
+          var modePN = _normTxt(modeP);
+          if(!isPaid && modePN && (modePN.indexOf('CHEQUE')>=0 || modePN.indexOf('ESP')>=0)){
+            var payShName = modePN.indexOf('CHEQUE')>=0 ? 'Cheques 1' : '\u0045sp\u00e8ces';
             var paySh = ss3.getSheetByName(payShName);
             if(paySh && paySh.getLastRow()>1){
               var payData = paySh.getRange(2,1,paySh.getLastRow()-1,7).getValues();
@@ -1825,7 +1829,7 @@ function traiterRequete(e) {
           // Lien HelloAsso : complément (réglé) ou totalité (non réglé)
           var montantHA = 0;
           if(isPaid && diff > 0) montantHA = Math.round(diff * 100);
-          else if(!isPaid && totalNet > 0) montantHA = Math.round(totalNet * 100);
+          else if(!isPaid && totalNet > 0) montantHA = Math.round(Math.max(0, totalNet - _deductionsDossier(dataM, codeM)) * 100);
           var lienHA = HELLOASSO_URL;
           try {
             if(montantHA > 0 && emailRow.email)
@@ -1907,10 +1911,13 @@ function traiterRequete(e) {
         var msg = rowsUpdated+' ligne(s) modifi\u00e9e(s) \u2014 total: '+totalNet.toFixed(2)+' \u20ac';
         if(diff!==0) msg += ' \u2014 diff: '+(diff>0?'+':'')+diff.toFixed(2)+' \u20ac';
         if(codeAvoir) msg += ' \u2014 avoir: '+codeAvoir;
-        return repondreAvecCb({status:'ok',message:msg,totalNet:totalNet,diff:diff,codeAvoir:codeAvoir},null,null,callback);
+        if(newEnAttente) msg += ' \u2014 activit\u00e9 compl\u00e8te : liste d\u2019attente';
+        return repondreAvecCb({status:'ok',message:msg,totalNet:totalNet,diff:diff,codeAvoir:codeAvoir,listeAttente:newEnAttente,regle:isPaid},null,null,callback);
       }catch(eMod){
         Logger.log('modifierActivite KO: '+eMod+' '+eMod.stack);
         return repondreAvecCb({status:'error',message:eMod.toString()},null,null,callback);
+      }finally{
+        try { lockMod.releaseLock(); } catch(eL){}
       }
     }
 
@@ -2013,16 +2020,14 @@ function traiterRequete(e) {
       }catch(errQS){Logger.log('❌ envoyerAttestationPDF erreur : ' + errQS.toString()); return repondreAvecCb({status:'error',message:errQS.toString()},null,null);}
     }
     if(payload.action==='ajouterActiviteDossier'){
-      var result3=ajouterActiviteDossierSheet(payload);
-      return repondreAvecCb({status:'ok',inserted:result3.inserted,nouveauTotal:result3.nouveauTotal||0},null,null,callback);
+      return repondreAvecCb(ajouterActiviteDossierSheet(payload),null,null,callback);
     }
-    if(payload.action==='supprimerActiviteDossier'){
-      var result=supprimerActiviteDossierSheet(payload.code||'',payload.actNom||'',payload.actId||'',payload.membreNom||'',parseFloat(payload.avoir)||0,payload.placesId||'',payload.commentaireAdmin||'',payload.montantModifie===true||payload.montantModifie==='true');
-      return repondreAvecCb({status:'ok',deleted:result.deleted},null,null,callback);
+    if(payload.action==='supprimerActiviteDossier' || payload.action==='supprimerActiviteNonRegle'){
+      var resSA=supprimerActiviteGAS(String(payload.code||'').trim(),payload.actNom||'',payload.actId||'',payload.membreNom||'',payload.placesId||'',payload.commentaireAdmin||'',payload.montantModifie===true||payload.montantModifie==='true',parseFloat(payload.avoir)||0);
+      return repondreAvecCb(resSA,null,null,callback);
     }
-    if(payload.action==='supprimerActiviteNonRegle'){
-      var result2=supprimerActiviteNonRegleSheet(payload.code||'',payload.actNom||'',payload.actId||'',payload.membreNom||'',payload.placesId||'',parseFloat(payload.nouveauTotal)||0,payload.commentaireAdmin||'',payload.montantModifie===true||payload.montantModifie==='true');
-      return repondreAvecCb({status:'ok',deleted:result2.deleted,nouveauTotal:result2.nouveauTotal||0},null,null,callback);
+    if(payload.action==='simulerSuppressionActivite'){
+      return repondreAvecCb(simulerSuppressionActiviteGAS(payload),null,null,callback);
     }
     if(payload.action==='supprimerDossier'){
       var result=supprimerDossierSheet(payload.code||'');
@@ -2548,7 +2553,7 @@ var ACTIONS_ADMIN = [
   'creerAvoirManuel', 'creerRemboursementManuel', 'envoyerRappelManuel', 'envoyerRappelPieces',
   'exportGestafillSheet', 'genererPDFInscriptionAdmin', 'getStatsTresorier',
   'getJournalSauvegardes', 'viderJournalSauvegardes', 'verifierDossiersPerdus',
-  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle',
+  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle', 'simulerSuppressionActivite',
   'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
   'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques',
   'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier',
@@ -3077,6 +3082,21 @@ function _estStatutRegle(st) {
   var s = String(st || '').toLowerCase();
   if (s.indexOf('attente') >= 0 || s.indexOf('cours') >= 0 || s.indexOf('à valider') >= 0) return false;
   return s.indexOf('validé') >= 0 || s.indexOf('payé') >= 0 || s.indexOf('réglé') >= 0;
+}
+
+// Aides et avoir déjà imputés sur un dossier (montant le plus élevé par type, recopié sur chaque ligne)
+function _deductionsDossier(data, code) {
+  var max = {PassJeunes: 0, Atout: 0, PASS: 0, ANCV: 0}, avoir = 0;
+  data.forEach(function(r) {
+    if (String(r[19] || '').trim() !== code) return;
+    var pa = String(r[35] || '');
+    Object.keys(max).forEach(function(t) {
+      var m = pa.match(new RegExp('(?:^|\\|)' + t + ':([\\d.]+)'));
+      if (m) max[t] = Math.max(max[t], parseFloat(m[1]) || 0);
+    });
+    avoir = Math.max(avoir, Number(r[33]) || 0);
+  });
+  return Math.round((max.PassJeunes + max.Atout + max.PASS + max.ANCV + avoir) * 100) / 100;
 }
 
 function _donneesJustificatif(code, lignes) {
@@ -4485,6 +4505,10 @@ function appliquerModificationDossier(params) {
     if (diff > 0)      { avoir      = diff; }  // remboursement
     else if (diff < 0) { supplement = -diff; } // complément à payer
   }
+  // Montant d'avoir saisi par l'administrateur (suppression sur dossier réglé)
+  if (estRegle && typeModif === 'suppression' && params.avoirImpose !== undefined && params.avoirImpose !== null) {
+    avoir = Math.max(0, Math.round(Number(params.avoirImpose) * 100) / 100); supplement = 0;
+  }
 
   // ── 4. Écrire l'avoir dans l'onglet Avoirs générés ──
   var codeAvoirGenere = '';
@@ -4562,7 +4586,7 @@ function appliquerModificationDossier(params) {
       : '<div style="margin:10px 0;padding:8px 14px;background:#fff3e0;border-left:4px solid #e65100;border-radius:4px;color:#e65100">➖ Activité supprimée : <strong>' + actNomClean + '</strong></div>';
 
     // Montant à régler : complément d'un dossier déjà réglé, ou total d'un dossier non réglé
-    var montantARegler = estRegle ? supplement : (typeModif === 'ajout' ? totalApres : 0);
+    var montantARegler = estRegle ? supplement : totalApres;   // non réglé : le nouveau total reste à régler
     var lienPaiement = '';
     if (montantARegler > 0 && emailAdherent) {
       var partsResp = String(responsable || '').trim().split(' ');
@@ -4720,6 +4744,21 @@ function appliquerModificationDossier(params) {
 }
 
 function ajouterActiviteDossierSheet(payload) {
+  // Envoi répété (délai dépassé puis nouvel essai) : on renvoie le résultat du premier envoi
+  var clefEnvoi = payload.idEnvoi ? 'ajout_act_' + String(payload.idEnvoi).slice(0, 80) : '';
+  var cache = CacheService.getScriptCache();
+  if (clefEnvoi) { var deja = cache.get(clefEnvoi); if (deja) { try { return JSON.parse(deja); } catch(e) {} } }
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return {status:'error', message:'Serveur occupé, réessayez dans un instant.'};
+  try {
+    if (clefEnvoi) { var deja2 = cache.get(clefEnvoi); if (deja2) { try { return JSON.parse(deja2); } catch(e) {} } }
+    var res = _ajouterActiviteDossier(payload);
+    if (clefEnvoi) cache.put(clefEnvoi, JSON.stringify(res), 21600);
+    return res;
+  } finally { lock.releaseLock(); }
+}
+
+function _ajouterActiviteDossier(payload) {
   var ss            = SpreadsheetApp.openById(SHEET_ID);
   var code          = payload.code          || '';
   var actNom        = payload.actNom        || '';
@@ -4734,15 +4773,17 @@ function ajouterActiviteDossierSheet(payload) {
   var lieu          = payload.lieu          || '';
   var animateur     = payload.animateur     || '';
   var tarif         = parseFloat(payload.tarif) || 0;
+  // estRegle = l'admin enregistre un règlement reçu pour cet ajout (sinon : à régler par la famille)
   var estRegle      = payload.estRegle === true || payload.estRegle === 'true';
   var statutInscrit = payload.statutInscription || '';
-  var modePaiement  = String(payload.modePaiement || 'cheque');
+  var modePaiement  = String(payload.modePaiement || '');
+  var montantRecu   = parseFloat(payload.montantRecu);
   var dateJour      = Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy à HH:mm');
 
-  var emailAdherent = '', responsable = '', adresse = '', cp = '', ville = '', tel1 = '', modePaiement = 'cheque';
+  var emailAdherent = '', responsable = '', adresse = '', cp = '', ville = '', tel1 = '', modeDossier = '';
   var totalActifExistant = 0;
   var membresExistants   = {};
-  var estRegleServeur    = false;
+  var nbLignesPayantes = 0, nbLignesReglees = 0;
 
   var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
   if (sheet && sheet.getLastRow() > 1) {
@@ -4756,15 +4797,17 @@ function ajouterActiviteDossierSheet(payload) {
         ville         = String(data[i][10] || '');
         tel1          = String(data[i][14] || '');
         responsable   = String(data[i][38] || '');
-        modePaiement  = String(data[i][32] || 'cheque');
+        modeDossier   = String(data[i][32] || '');
       }
       var statLigne = String(data[i][21] || '');
-      if (statLigne.indexOf('supprimée') >= 0) continue;
-      // Dossier réglé ? même règle que modifierActivite (statut de paiement « validé » / « payé »)
-      var statLower = statLigne.toLowerCase();
-      if (statLower.indexOf('valid\u00e9') >= 0 || statLower.indexOf('pay\u00e9') >= 0) estRegleServeur = true;
-      var isWaiting = String(data[i][39] || '').toLowerCase().indexOf('attente') >= 0;
-      if (!isWaiting) totalActifExistant += Number(data[i][27] || 0);
+      var stInsc = lireStatutInscription(data[i]).toLowerCase();
+      if (statLigne.toLowerCase().indexOf('supprim') >= 0 || stInsc.indexOf('supprim') >= 0) continue;
+      var isWaiting = stInsc.indexOf('attente') >= 0;
+      if (!isWaiting) {
+        totalActifExistant += Number(data[i][27] || 0);
+        nbLignesPayantes++;
+        if (_estStatutRegle(statLigne)) nbLignesReglees++;
+      }
       var mbKey = (String(data[i][3] || '') + ' ' + String(data[i][2] || '')).trim();
       membresExistants[mbKey] = true;
     }
@@ -4774,6 +4817,23 @@ function ajouterActiviteDossierSheet(payload) {
   // (Avant, l'adhésion déjà réglée n'était pas comptée : l'email réclamait 15 € de trop.)
   var totalDossierAvant = 0;
   try { totalDossierAvant = lireLignesRestantes(ss, code, null).totalNet || 0; } catch(eAv) { Logger.log('Total avant ajout KO : ' + eAv); }
+
+  // Dossier réglé = toutes les activités payantes déjà réglées (un ajout réglé isolé ne suffit pas)
+  var estRegleServeur = nbLignesPayantes > 0 && nbLignesReglees === nbLignesPayantes;
+  if (!modePaiement) modePaiement = modeDossier || 'cheque';
+  // Activité complète (onglet Places, colonne E) → liste d'attente, rien à régler
+  if (statutInscrit.indexOf('attente') < 0) {
+    try {
+      var plA = ss.getSheetByName(SHEET_PLACES);
+      if (plA && plA.getLastRow() > 1) {
+        var plAD = plA.getRange(2, 1, plA.getLastRow() - 1, 5).getValues();
+        for (var pa = 0; pa < plAD.length; pa++) {
+          if (String(plAD[pa][0]).trim() === placesId) { if ((parseInt(plAD[pa][4]) || 0) <= 0) statutInscrit = 'Liste attente'; break; }
+        }
+      }
+    } catch(ePl) {}
+  }
+  if (statutInscrit.indexOf('attente') >= 0) estRegle = false;
 
   var nouveauMembreKey  = (membrePrenom + ' ' + membreNom).trim();
   var estNouveauMembre  = !membresExistants[nouveauMembreKey];
@@ -4791,7 +4851,9 @@ function ajouterActiviteDossierSheet(payload) {
     + 'montantModifie reçu:' + payload.montantModifie + ' (typeof ' + typeof payload.montantModifie + ')');
 
   var modeLabel = modePaiement === 'helloasso' ? 'HelloAsso' : (modePaiement.charAt(0).toUpperCase() + modePaiement.slice(1));
-  var statut = estRegle ? '✅ Payé — ' + modeLabel : '⏳ En cours de validation — ' + modeLabel;
+  var statut = statutInscrit.indexOf('attente') >= 0 ? '— Non concerné'
+             : estRegle ? '✅ Payé — ' + modeLabel
+             : '⏳ En attente de règlement — ' + (payload.reglementFamille ? 'lien HelloAsso envoyé' : modeLabel);
 
   var newRow = [
     // Col 1-11 : identite membre
@@ -4903,63 +4965,51 @@ function ajouterActiviteDossierSheet(payload) {
     if (estRegle) actSheet.getRange(nextActRow, 3).setBackground('#d8f3dc').setFontColor('#2d6a4f').setFontWeight('bold');
   }
 
-  if (statutInscrit.indexOf('attente') < 0) {
-    try {
-      var placesSheet = ss.getSheetByName(SHEET_PLACES);
-      if (placesSheet && placesSheet.getLastRow() > 1) {
-        var pData = placesSheet.getRange(2, 1, placesSheet.getLastRow() - 1, 5).getValues();
-        for (var p = 0; p < pData.length; p++) {
-          if (String(pData[p][0]).trim() !== placesId) continue;
-          var inscrits2 = (parseInt(pData[p][3]) || 0) + 1;
-          var cap2      = parseInt(pData[p][2]) || 20;
-          placesSheet.getRange(p + 2, 4).setValue(inscrits2);
-          placesSheet.getRange(p + 2, 5).setValue(Math.max(0, cap2 - inscrits2));
-          break;
-        }
-      }
-    } catch(ep) { Logger.log('Places KO : ' + ep); }
-  }
+  if (statutInscrit.indexOf('attente') < 0) _majPlaces(ss, placesId, +1);
 
   // ── Recalcul remise + email + avoir via helper central ──
   var actNomClean2 = actNom.replace(/\n/g, ' — ');
   var modeLabel2 = modePaiement==='helloasso'?'HelloAsso':modePaiement==='especes'?'Espèces':'Chèque';
-  // Ecrire dans l'onglet paiement si dossier regle et activite non en attente
-  if (estRegle && statutInscrit.indexOf('attente') < 0) {
-    try {
-      var dA = Utilities.formatDate(new Date(),'Europe/Paris','dd/MM/yyyy');
-      if (modePaiement==='especes') {
-        var shEA=getOrCreateEspecesSheet(ss); var nrEA=Math.max(shEA.getLastRow()+1,4);
-        shEA.getRange(nrEA,1,1,7).setValues([[code,membreNom,membrePrenom,emailAdherent,tarifNouvelleLigne,dA,'✅ Validé — Admin']]);
-        shEA.getRange(nrEA,5).setFontColor('#4e342e').setFontWeight('bold');
-        shEA.getRange(nrEA,7).setFontColor('#1b5e20').setFontWeight('bold');
-        majTotalEspeces(ss);
-      } else if (modePaiement==='cheque') {
-        var shCA=getOrCreateChequeSheet(ss,SHEET_CHEQUE_1); var nrCA=Math.max(shCA.getLastRow()+1,4);
-        shCA.getRange(nrCA,1,1,7).setValues([[code,membreNom,membrePrenom,'','',tarifNouvelleLigne,'✅ Validé — Admin']]);
-        shCA.getRange(nrCA,6).setFontColor('#1b5e20').setFontWeight('bold');
-        shCA.getRange(nrCA,7).setFontColor('#1b5e20').setFontWeight('bold');
-        majTotalCheque(ss,SHEET_CHEQUE_1);
-      } else if (modePaiement==='helloasso') {
-        var shHA2=getOrCreateHelloAssoSheet(ss); var nrHA2=Math.max(shHA2.getLastRow()+1,4);
-        shHA2.getRange(nrHA2,1,1,9).setValues([[code,membreNom,membrePrenom,emailAdherent,tarifNouvelleLigne,tarifNouvelleLigne,'HelloAsso',dA,'✅ Validé — Admin']]);
-        shHA2.getRange(nrHA2,6).setFontColor('#1b5e20').setFontWeight('bold');
-        majTotalHelloAsso(ss);
-      }
-      Logger.log('✅ Paiement ajout: '+code+' '+modePaiement+' '+tarifNouvelleLigne+'EUR');
-    } catch(ePay){Logger.log('Paiement ajout KO: '+ePay);}
-  }
   var modifResult = appliquerModificationDossier({
     ss: ss, code: code, actNomClean: actNomClean2,
     // Email : le statut réel du dossier (Sheet) décide. Dossier réglé → seul le complément
     // est réclamé ; dossier non réglé → le total du dossier est réclamé.
     typeModif: 'ajout', estRegle: estRegleServeur,
-    totalPayeAvant: estRegleServeur ? totalDossierAvant : 0,
+    // Règlement de l'ajout reçu par l'admin : il compte comme déjà payé (pas de complément réclamé en double)
+    totalPayeAvant: estRegleServeur ? totalDossierAvant + (estRegle ? (isNaN(montantRecu) ? 0 : montantRecu) : 0) : 0,
     emailAdherent: emailAdherent, responsable: responsable,
     modePaiement: modeLabel2,
     commentaireAdmin: payload.commentaireAdmin || '',
     montantModifie:   payload.montantModifie === true || payload.montantModifie === 'true',
     membreNomLog: membreNom, membrePrenomLog: membrePrenom
   });
+  // Règlement reçu par l'admin pour cet ajout : montant saisi, sinon le complément calculé
+  var montantPaye = !isNaN(montantRecu) ? montantRecu : (estRegleServeur ? (modifResult.supplement || 0) : tarifNouvelleLigne);
+  // Ecrire dans l'onglet paiement si dossier regle et activite non en attente
+  if (estRegle && statutInscrit.indexOf('attente') < 0) {
+    try {
+      var dA = Utilities.formatDate(new Date(),'Europe/Paris','dd/MM/yyyy');
+      if (modePaiement==='especes') {
+        var shEA=getOrCreateEspecesSheet(ss); var nrEA=Math.max(shEA.getLastRow()+1,4);
+        shEA.getRange(nrEA,1,1,7).setValues([[code,membreNom,membrePrenom,emailAdherent,montantPaye,dA,'✅ Validé — Admin']]);
+        shEA.getRange(nrEA,5).setFontColor('#4e342e').setFontWeight('bold');
+        shEA.getRange(nrEA,7).setFontColor('#1b5e20').setFontWeight('bold');
+        majTotalEspeces(ss);
+      } else if (modePaiement==='cheque') {
+        var shCA=getOrCreateChequeSheet(ss,SHEET_CHEQUE_1); var nrCA=Math.max(shCA.getLastRow()+1,4);
+        shCA.getRange(nrCA,1,1,7).setValues([[code,membreNom,membrePrenom,'','',montantPaye,'✅ Validé — Admin']]);
+        shCA.getRange(nrCA,6).setFontColor('#1b5e20').setFontWeight('bold');
+        shCA.getRange(nrCA,7).setFontColor('#1b5e20').setFontWeight('bold');
+        majTotalCheque(ss,SHEET_CHEQUE_1);
+      } else if (modePaiement==='helloasso') {
+        var shHA2=getOrCreateHelloAssoSheet(ss); var nrHA2=Math.max(shHA2.getLastRow()+1,4);
+        shHA2.getRange(nrHA2,1,1,9).setValues([[code,membreNom,membrePrenom,emailAdherent,montantPaye,montantPaye,'HelloAsso',dA,'✅ Validé — Admin']]);
+        shHA2.getRange(nrHA2,6).setFontColor('#1b5e20').setFontWeight('bold');
+        majTotalHelloAsso(ss);
+      }
+      Logger.log('✅ Paiement ajout: '+code+' '+modePaiement+' '+montantPaye+'EUR');
+    } catch(ePay){Logger.log('Paiement ajout KO: '+ePay);}
+  }
   // Retourner le nouveau total depuis le Sheet (après recalcul remise)
   var nouveauTotalReel = 0;
   try {
@@ -4975,291 +5025,192 @@ function ajouterActiviteDossierSheet(payload) {
       }
     }
   } catch(et) { Logger.log('Lecture total ajout KO : ' + et); }
-  return { inserted: 1, nouveauTotal: nouveauTotalReel };
+  return { status: 'ok', inserted: 1, nouveauTotal: nouveauTotalReel || modifResult.totalApres,
+           listeAttente: statutInscrit.indexOf('attente') >= 0, supplement: modifResult.supplement || 0, regle: estRegleServeur };
 }
 
 // ============================================================
-// SUPPRIMER UNE ACTIVITÉ (DOSSIER RÉGLÉ) — v8.8
-// Avoir = Total_payé - Total_dû_après_suppression (sans remise si < 3 élig.)
-// + recalcul remise sur lignes restantes + email cohérent Sheet
+// OUTILS COMMUNS — ajout / suppression / modification d'activité (console admin)
 // ============================================================
-function supprimerActiviteDossierSheet(code, actNom, actId, membreNom, avoirMontant, placesIdParam, commentaireAdmin, montantModifie) {
-  Logger.log('supprimerActiviteDossierSheet v8.8 — code:'+code+' actId:'+actId);
-  var ss = SpreadsheetApp.openById(SHEET_ID);
-  var placesIdCible = placesIdParam || getPlacesId(actId || '');
-  var deleted = 0;
-  var actNomClean = actNom.replace(/\n/g, ' — ');
-  var dateJour = Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy à HH:mm');
-  var emailAdherent = '', responsable = '';
+function _normTxt(v) {
+  return String(v || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z0-9]/g, '');
+}
+// Colonne (1-based) du statut d'inscription selon la structure de la ligne
+function _colStatutInscription(row) { return isNewStructure(row) ? 40 : 38; }
 
-  var NON_REMISABLE = ['PINGL1945/ME1945','PINGM1930/ME21','PINGJ1530',
-    'PINGL18/J17','PINGME1730','PINGL1745ME1830','JAZME1015','JAZME1115','JAZME1315','JAZME1415','JAZME1515',
-    'JAZME1615','JAZME1715','JAZJ1745','MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
-  function estEligible(pid) {
-    if (!pid) return false;
-    if (NON_REMISABLE.indexOf(pid) >= 0) return false;
-    if (pid.indexOf('PING') >= 0) return false;
-    return true;
+// Ligne d'activité d'un dossier : ID d'abord (et le bon membre si plusieurs), sinon nom exact.
+// Les lignes supprimées sont ignorées ; renvoie l'index dans data ou -1.
+function _trouverLigneActivite(data, code, placesId, actNom, membreNom) {
+  var cibleMembre = _normTxt(membreNom), cibleNom = _normTxt(String(actNom || '').replace(/\n/g, ' — '));
+  var parId = [], parNom = [];
+  for (var i = 0; i < data.length; i++) {
+    if (String(data[i][19] || '').trim() !== code) continue;
+    if (lireStatutInscription(data[i]).toLowerCase().indexOf('supprim') >= 0) continue;
+    if (String(data[i][21] || '').toLowerCase().indexOf('supprim') >= 0) continue;
+    if (placesId && lireActiviteId(data[i]) === placesId) parId.push(i);
+    else if (cibleNom && _normTxt(String(data[i][22] || '').replace(/\n/g, ' — ')) === cibleNom) parNom.push(i);
   }
-
-  var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
-
-  // ── Passe 1 : lire toutes les lignes actives AVANT suppression ──
-  var totalPayeActuel = 0;
-  var lignesActives = [];
-  var membresUniques = {}, ffttVus = {};
-  var fnsmrTotal = 0, ffttTotal = 0;
-  var seenPidsAvant = {}, nbEligiblesAvant = 0;
-
-  if (sheet && sheet.getLastRow() > 1) {
-    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
-    for (var i = 0; i < data.length; i++) {
-      if (String(data[i][19] || '').trim() !== code) continue;
-      var st38 = String(data[i][39] || '').toLowerCase();
-      var st22 = String(data[i][21] || '').toLowerCase();
-      if (st38.indexOf('supprimée') >= 0 || st22.indexOf('supprimée') >= 0) continue;
-      if (st38.indexOf('attente') >= 0) continue;
-
-      var pid = String(data[i][37] || '').trim();
-      var tarifActuel = Number(data[i][27] || 0);
-      var note = sheet.getRange(i + 2, 28).getNote() || '';
-      var brutMatch = note.match(/Tarif brut\s*:\s*([\d.]+)/);
-      var tarifBrut = brutMatch ? parseFloat(brutMatch[1]) : tarifActuel;
-      var memKey = String(data[i][3] || '') + ' ' + String(data[i][2] || '');
-      var ffttVal = 0; // FFTT supprimé
-
-      if (!membresUniques[memKey]) { membresUniques[memKey] = true; fnsmrTotal += 15; }
-      if (ffttVal > 0 && !ffttVus[memKey]) { ffttVus[memKey] = true; ffttTotal += ffttVal; }
-
-      // Détecter l'email et le responsable
-      if (!emailAdherent) emailAdherent = String(data[i][15] || '');
-      if (!responsable)   responsable   = String(data[i][38] || '');
-
-      var rowActNorm = String(data[i][22] || '').replace(/\n/g, ' — ').toLowerCase();
-      var actNomNorm = actNomClean.toLowerCase();
-      var isCible = (pid === placesIdCible)
-        || (actNomNorm.length >= 8 && rowActNorm.indexOf(actNomNorm.substring(0, 15)) >= 0);
-
-      lignesActives.push({ idx: i, pid: pid, tarifActuel: tarifActuel, tarifBrut: tarifBrut, isCible: isCible,
-        activite: String(data[i][22] || '').replace(/\n/g, ' — '),
-        membre: String(data[i][3] || '') + ' ' + String(data[i][2] || ''),
-        jour: String(data[i][23] || ''), heure: String(data[i][24] || ''), elig: estEligible(pid) });
-
-      totalPayeActuel += tarifActuel;
-      if (estEligible(pid) && !seenPidsAvant[pid]) { seenPidsAvant[pid] = true; nbEligiblesAvant++; }
-    }
+  var candidats = parId.length ? parId : parNom;
+  if (!candidats.length) return -1;
+  if (cibleMembre) {
+    var duMembre = candidats.filter(function(i) {
+      return _normTxt(String(data[i][3] || '') + String(data[i][2] || '')) === cibleMembre
+          || _normTxt(String(data[i][2] || '') + String(data[i][3] || '')) === cibleMembre;
+    });
+    if (duMembre.length) return duMembre[0];
+    if (candidats.length > 1) return -1;   // plusieurs membres possibles : ne pas deviner
   }
+  return candidats[0];
+}
 
-  var totalPayeAvecFNSMR = Math.round((totalPayeActuel + fnsmrTotal + ffttTotal) * 100) / 100;
-
-  // ── Calcul total dû APRÈS suppression ──
-  var lignesRestantes = lignesActives.filter(function(l) { return !l.isCible; });
-  var seenPidsApres = {}, nbEligiblesApres = 0;
-  lignesRestantes.forEach(function(l) {
-    if (estEligible(l.pid) && !seenPidsApres[l.pid]) { seenPidsApres[l.pid] = true; nbEligiblesApres++; }
-  });
-  var aRemiseApres = nbEligiblesApres >= 3;
-
-  // Recalculer FNSMR et FFTT sur les membres restants uniquement
-  var membresApres = {}, ffttApres = {}, fnsmrApres = 0, ffttApresTotal = 0;
-  lignesRestantes.forEach(function(l) {
-    var mk = l.membre;
-    if (!membresApres[mk]) { membresApres[mk] = true; fnsmrApres += 15; }
-  });
-  // FFTT : recalculer depuis les lignes restantes
-  if (sheet && sheet.getLastRow() > 1) {
-    var dataFF2 = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
-    var ffttVus2 = {};
-    for (var fi2 = 0; fi2 < dataFF2.length; fi2++) {
-      if (String(dataFF2[fi2][19] || '').trim() !== code) continue;
-      if (String(dataFF2[fi2][39] || '').toLowerCase().indexOf('supprimée') >= 0) continue;
-      var pid2 = String(dataFF2[fi2][37] || '').trim();
-      if (pid2 === placesIdCible) continue; // exclure la ligne supprimée
-      var memK2 = String(dataFF2[fi2][3] || '') + ' ' + String(dataFF2[fi2][2] || '');
-      var ffV2 = Number(dataFF2[fi2][40] || 0);
-      if (ffV2 > 0 && !ffttVus2[memK2]) { ffttVus2[memK2] = true; ffttApresTotal += ffV2; }
-    }
-  }
-
-  var totalDuApres = 0;
-  lignesRestantes.forEach(function(l) {
-    totalDuApres += (aRemiseApres && estEligible(l.pid))
-      ? Math.round(l.tarifBrut * 0.85 * 100) / 100 : l.tarifBrut;
-  });
-  totalDuApres = Math.round((totalDuApres + fnsmrApres + ffttApresTotal) * 100) / 100;
-
-  var avoir = Math.max(0, Math.round((totalPayeAvecFNSMR - totalDuApres) * 100) / 100);
-
-  Logger.log('supprimerActiviteDossierSheet v8.8'
-    + ' | nbEligAvant:' + nbEligiblesAvant + ' | nbEligApres:' + nbEligiblesApres
-    + ' | aRemiseApres:' + aRemiseApres
-    + ' | totalPayé:' + totalPayeAvecFNSMR + ' | totalDûApres:' + totalDuApres + ' | avoir:' + avoir);
-
-  // ── Passe 2 : marquer la ligne supprimée en orange ──
-  var ligneSupprimeeRow = 0;
-  if (sheet && sheet.getLastRow() > 1) {
-    var data2 = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
-    for (var j = 0; j < data2.length; j++) {
-      if (String(data2[j][19] || '').trim() !== code) continue;
-      var pid2 = lireActiviteId(data2[j]);
-      var act2 = String(data2[j][22] || '').replace(/\n/g, ' — ').toLowerCase();
-      var isCible2 = (pid2 === placesIdCible)
-        || (actNomClean.toLowerCase().length >= 8 && act2.indexOf(actNomClean.toLowerCase().substring(0, 15)) >= 0);
-      if (!isCible2) continue;
-      sheet.getRange(j + 2, 1, 1, 41).setBackground('#ffe0b2');
-      sheet.getRange(j + 2, 22).setValue('🗑 Activité supprimée').setFontColor('#e65100').setFontWeight('bold');
-      sheet.getRange(j + 2, 40).setValue('Supprimée').setFontColor('#bf360c').setFontWeight('bold');
-      sheet.getRange(j + 2, 30).setValue(0).setFontColor('#e65100'); // col 30 AD = 0 (ligne supprimée)
-      ligneSupprimeeRow = j + 2;
-      deleted++;
-      break;
-    }
-  }
-
-  // ── Passe 3 : supprimer des onglets activités ──
-  var protectedNames = [SHEET_INSCRIPTIONS,SHEET_RECAPITULATIF,SHEET_PLACES,SHEET_CHEQUE_1,SHEET_CHEQUE_2,
-    SHEET_CHEQUE_3,SHEET_AVOIRS,SHEET_AIDE_ANCV,SHEET_AIDE_ATOUT,SHEET_AIDE_PASS_J,SHEET_AIDE_PASS_S,SHEET_ESPECES];
-  ss.getSheets().forEach(function(s) {
-    var nom = s.getName();
-    if (protectedNames.indexOf(nom) >= 0) return;
-    if (nom !== placesIdCible && nom !== actId) return;
-    if (s.getLastRow() < 3) return;
-    var aData = s.getRange(3, 1, s.getLastRow() - 2, 1).getValues();
-    for (var k = aData.length - 1; k >= 0; k--) {
-      if (String(aData[k][0] || '').trim() === code) { s.deleteRow(k + 3); break; }
-    }
-  });
-
-  // ── Passe 4 : décrémenter les places ──
+// Onglet Places : Inscrits (D) ± delta, Places restantes (E) = Capacité (C) − Inscrits. Capacité inchangée.
+function _majPlaces(ss, placesId, delta) {
+  if (!placesId || !delta) return;
   try {
-    var placesSheet = ss.getSheetByName(SHEET_PLACES);
-    if (placesSheet && placesSheet.getLastRow() > 1) {
-      var pData = placesSheet.getRange(2, 1, placesSheet.getLastRow() - 1, 5).getValues();
-      for (var p = 0; p < pData.length; p++) {
-        var pId = String(pData[p][0]).trim();
-        if (pId === placesIdCible || pId === actId) {
-          var inscrits = Math.max(0, (parseInt(pData[p][3]) || 0) - 1);
-          var capacity = parseInt(pData[p][2]) || 20;
-          placesSheet.getRange(p + 2, 4).setValue(inscrits);
-          placesSheet.getRange(p + 2, 5).setValue(capacity - inscrits);
-          break;
-        }
-      }
+    var sh = ss.getSheetByName(SHEET_PLACES);
+    if (!sh || sh.getLastRow() < 2) return;
+    var d = sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues();
+    for (var p = 0; p < d.length; p++) {
+      if (String(d[p][0]).trim() !== placesId) continue;
+      var cap = parseInt(d[p][2]) || 20;
+      var insc = Math.max(0, (parseInt(d[p][3]) || 0) + delta);
+      var dispo = Math.max(0, cap - insc);
+      sh.getRange(p + 2, 4).setValue(insc);
+      sh.getRange(p + 2, 5).setValue(dispo)
+        .setBackground(dispo === 0 ? '#ffcdd2' : dispo <= 2 ? '#fff9c4' : '#d8f3dc')
+        .setFontColor(dispo === 0 ? '#c62828' : '#2d6a4f').setFontWeight('bold');
+      break;
     }
-  } catch(ep) { Logger.log('Places update KO: ' + ep.toString()); }
-
-  // ── Passses 5-6-7 : recalcul + avoir + email via helper central ──
-  var modifResultSuppr = appliquerModificationDossier({
-    ss: ss, code: code, actNomClean: actNomClean,
-    typeModif: 'suppression', estRegle: true,
-    totalPayeAvant: totalPayeAvecFNSMR,
-    fnsmrPaye: fnsmrTotal,
-    emailAdherent: emailAdherent, responsable: responsable,
-    commentaireAdmin: commentaireAdmin || '',
-    montantModifie: montantModifie === true || montantModifie === 'true',
-    membreNomLog: membreNom || ''
-  });
-  var avoir = modifResultSuppr.avoir;
-  if (ligneSupprimeeRow) {
-    sheet.getRange(ligneSupprimeeRow, 34).setValue(avoir > 0
-      ? 'Avoir suppression : ' + avoir.toFixed(2) + ' € (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)'
-      : 'Suppression — aucun avoir (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)');
-  }
-
-  Logger.log('✅ supprimerActiviteDossierSheet v8.8 terminé — deleted:' + deleted + ' avoir:' + avoir + '€');
-  return { deleted: deleted, avoir: avoir, nouveauTotal: modifResultSuppr.totalApres };
+  } catch(e) { Logger.log('Places ' + placesId + ' KO : ' + e); }
+  invaliderCachePlaces();
 }
 
+// Onglet de l'activité (une ligne par inscrit, à partir de la ligne 3) : retire la ligne du membre
+function _retirerDeOngletActivite(ss, placesId, code, nom, prenom) {
+  try {
+    var sh = ss.getSheetByName(placesId);
+    if (!sh || sh.getLastRow() < 2) return;
+    var d = sh.getRange(2, 1, sh.getLastRow() - 1, 5).getValues();
+    var n = _normTxt(nom), pr = _normTxt(prenom), repli = -1;
+    for (var k = d.length - 1; k >= 0; k--) {
+      if (String(d[k][0] || '').trim() !== code) continue;
+      if (_normTxt(d[k][3]) === n && _normTxt(d[k][4]) === pr) { sh.deleteRow(k + 2); return; }
+      if (repli < 0) repli = k;
+    }
+    // Ancien format sans nom exploitable : une seule ligne pour ce dossier → c'est elle
+    var memeCode = d.filter(function(r) { return String(r[0] || '').trim() === code; }).length;
+    if (repli >= 0 && memeCode === 1) sh.deleteRow(repli + 2);
+  } catch(e) { Logger.log('Onglet ' + placesId + ' KO : ' + e); }
+}
 
 // ============================================================
-// SUPPRIMER ACTIVITÉ NON RÉGLÉE — v8.8
-// Après suppression : recalcul remise + email cohérent Sheet
+// SUPPRIMER UNE ACTIVITÉ (console admin) — dossier réglé ou non
+// Réglé : ligne gardée en orange, avoir = réglé − nouveau total (remise recalculée),
+//         adhésion jamais remboursée, frais de dossier retenus.
+// Non réglé : ligne effacée, nouveau total à régler envoyé à la famille.
+// Le statut « réglé » est lu dans la feuille (colonne Statut paiement), pas dans le navigateur.
 // ============================================================
-function supprimerActiviteNonRegleSheet(code, actNom, actId, membreNom, placesIdParam, nouveauTotal, commentaireAdmin, montantModifie) {
-  Logger.log('supprimerActiviteNonRegleSheet v8.8 — code:' + code + ' act:' + actNom);
-  var ss = SpreadsheetApp.openById(SHEET_ID);
-  var deleted = 0;
-  var placesIdCible = placesIdParam || getPlacesId(actId || '');
-  var dateJour = Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy à HH:mm');
-  var actNomClean = actNom.replace(/\n/g, ' — ');
-  var emailAdherent = '', responsable = '';
-
+function _estimerSuppressionActivite(ss, code, placesIdCible, actNom, membreNom) {
   var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
-  if (sheet && sheet.getLastRow() > 1) {
-    var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
-    for (var i = data.length - 1; i >= 0; i--) {
-      var rowCode  = String(data[i][19] || '').trim();
-      // ID Activité : col 38 AL (index 37) en v8.8 41 colonnes
-      // ou col 36 AJ (index 35) en ancienne structure 39 colonnes
-      // Chercher dans les deux et prendre celui qui ressemble à un placesId
-      var rowPid = lireActiviteId(data[i]);
-      var rowNorm  = String(data[i][22] || '').replace(/\n/g, ' — ').toLowerCase();
-      var actNorm  = actNomClean.toLowerCase();
-      if (rowCode !== code) continue;
-      var matchPid  = (rowPid === placesIdCible) || (rowPid37 === placesIdCible) || (rowPid35 === placesIdCible);
-      var matchNom1 = (actNorm.length >= 8 && rowNorm.indexOf(actNorm.substring(0, 15)) >= 0);
-      var matchNom2 = (actNorm.length >= 8 && actNorm.indexOf(rowNorm.substring(0, 15)) >= 0);
-      var match = matchPid || matchNom1 || matchNom2;
-      Logger.log('supprimerNonRegle row'+i+' pid:"'+rowPid+'" vs "'+placesIdCible+'" match:'+match);
-      if (!match) continue;
-      if (!emailAdherent) emailAdherent = String(data[i][15] || '');
-      if (!responsable)   responsable   = String(data[i][38] || '');
-      sheet.deleteRow(i + 2);
-      deleted++;
-      Logger.log('✅ Ligne supprimée (non réglé) : ' + rowCode + ' / ' + rowNorm);
-      break;
+  if (!sheet || sheet.getLastRow() < 2) return {status:'error', message:'Feuille Inscriptions vide'};
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
+  var idx = _trouverLigneActivite(data, code, placesIdCible, actNom, membreNom);
+  if (idx < 0) return {status:'error', message:'Activité introuvable dans le dossier ' + code + ' pour ' + (membreNom || '?')};
+  var row = data[idx];
+  var enAttente = lireStatutInscription(row).toLowerCase().indexOf('attente') >= 0;
+  var regle = !enAttente && _estStatutRegle(row[21]);
+  var avant = lireLignesRestantes(ss, code, null);
+  // Simulation : même calcul que lireLignesRestantes sans la ligne ciblée
+  var restantes = [], membres = {};
+  data.forEach(function(r, i) {
+    if (i === idx || String(r[19] || '').trim() !== code) return;
+    var st = lireStatutInscription(r).toLowerCase();
+    if (st.indexOf('supprim') >= 0 || st.indexOf('attente') >= 0) return;
+    restantes.push({ab: Number(r[27]) || 0, ac: Number(r[28]) || 0});
+    membres[String(r[3] || '') + ' ' + String(r[2] || '')] = true;
+  });
+  var nbElig = restantes.filter(function(x) { return x.ac === 1; }).length;
+  var totalAct = restantes.reduce(function(t, x) { return t + (nbElig >= 3 ? Math.round(x.ab * (1 - 0.15 * x.ac) * 100) / 100 : x.ab); }, 0);
+  var fnsmrApres = Object.keys(membres).length * 15;
+  var apres = Math.round((totalAct + fnsmrApres) * 100) / 100;
+  var avoir = 0;
+  if (regle) {
+    var adhesion = Math.max(0, (avant.fnsmr || 0) - fnsmrApres);
+    avoir = Math.max(0, Math.round((avant.totalNet - apres - adhesion - FRAIS_DOSSIER_SUPPRESSION) * 100) / 100);
+  }
+  return {status:'ok', idx: idx, row: row, enAttente: enAttente, regle: regle,
+          totalAvant: avant.totalNet, fnsmrAvant: avant.fnsmr, totalApres: apres, avoir: avoir,
+          tarif: Number(row[27]) || 0};
+}
+
+function simulerSuppressionActiviteGAS(p) {
+  var ss = SpreadsheetApp.openById(SHEET_ID);
+  var e = _estimerSuppressionActivite(ss, String(p.code || ''), p.placesId || getPlacesId(p.actId || ''), p.actNom || '', p.membreNom || '');
+  if (e.status !== 'ok') return e;
+  return {status:'ok', regle: e.regle, enAttente: e.enAttente, totalAvant: e.totalAvant, totalApres: e.totalApres,
+          avoir: e.avoir, tarif: e.tarif, frais: e.regle ? FRAIS_DOSSIER_SUPPRESSION : 0};
+}
+
+function supprimerActiviteGAS(code, actNom, actId, membreNom, placesIdParam, commentaireAdmin, montantModifie, avoirSaisi) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) return {status:'error', message:'Serveur occupé, réessayez dans un instant.'};
+  try {
+    var ss = SpreadsheetApp.openById(SHEET_ID);
+    var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
+    var placesIdCible = placesIdParam || getPlacesId(actId || '');
+    var actNomClean = String(actNom || '').replace(/\n/g, ' — ');
+    var e = _estimerSuppressionActivite(ss, code, placesIdCible, actNom, membreNom);
+    if (e.status !== 'ok') return e;
+    var row = e.row, ligne = e.idx + 2;
+    var nom = String(row[2] || ''), prenom = String(row[3] || '');
+    var emailAdherent = String(row[15] || ''), responsable = lireResponsable(row);
+    actNomClean = String(row[22] || actNomClean).replace(/\n/g, ' — ');
+    var pid = lireActiviteId(row) || placesIdCible;
+
+    if (e.regle) {
+      sheet.getRange(ligne, 1, 1, 41).setBackground('#ffe0b2');
+      sheet.getRange(ligne, 22).setValue('🗑 Activité supprimée').setFontColor('#e65100').setFontWeight('bold');
+      sheet.getRange(ligne, _colStatutInscription(row)).setValue('Supprimée').setFontColor('#bf360c').setFontWeight('bold');
+      sheet.getRange(ligne, 30).setValue(0).setFontColor('#e65100');
+    } else {
+      sheet.deleteRow(ligne);
     }
     SpreadsheetApp.flush();
+    if (!e.enAttente) {
+      _retirerDeOngletActivite(ss, pid, code, nom, prenom);
+      _majPlaces(ss, pid, -1);
+    }
+
+    var res = appliquerModificationDossier({
+      ss: ss, code: code, actNomClean: actNomClean,
+      typeModif: 'suppression', estRegle: e.regle,
+      totalPayeAvant: e.regle ? e.totalAvant : 0,
+      fnsmrPaye: e.fnsmrAvant,
+      avoirImpose: (e.regle && montantModifie) ? Math.max(0, Number(avoirSaisi) || 0) : undefined,
+      emailAdherent: emailAdherent, responsable: responsable,
+      commentaireAdmin: commentaireAdmin || '',
+      montantModifie: montantModifie === true || montantModifie === 'true',
+      membreNomLog: (prenom + ' ' + nom).trim()
+    });
+    if (e.regle) {
+      sheet.getRange(ligne, 34).setValue(res.avoir > 0
+        ? 'Avoir suppression : ' + res.avoir.toFixed(2) + ' € (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)'
+        : 'Suppression — aucun avoir (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)');
+    }
+    Logger.log('✅ supprimerActiviteGAS ' + code + ' / ' + actNomClean + ' / ' + prenom + ' ' + nom
+      + ' — réglé:' + e.regle + ' attente:' + e.enAttente + ' avoir:' + res.avoir);
+    return {status:'ok', deleted: 1, regle: e.regle, avoir: res.avoir, nouveauTotal: res.totalApres};
+  } finally {
+    lock.releaseLock();
   }
+}
 
-  // ── Recalcul remise via helper central (avant suppression onglets) ──
-  // (appliquerModificationDossier sera appelé après suppression onglets/places)
-
-  // ── Supprimer des onglets activités ──
-  var protectedNames = [SHEET_INSCRIPTIONS,SHEET_RECAPITULATIF,SHEET_PLACES,SHEET_CHEQUE_1,SHEET_CHEQUE_2,
-    SHEET_CHEQUE_3,SHEET_AVOIRS,SHEET_AIDE_ANCV,SHEET_AIDE_ATOUT,SHEET_AIDE_PASS_J,SHEET_AIDE_PASS_S,SHEET_ESPECES];
-  ss.getSheets().forEach(function(s) {
-    var nom = s.getName();
-    if (protectedNames.indexOf(nom) >= 0) return;
-    if (nom !== placesIdCible && nom !== actId) return;
-    if (s.getLastRow() < 3) return;
-    var aData = s.getRange(3, 1, s.getLastRow() - 2, 1).getValues();
-    for (var k = aData.length - 1; k >= 0; k--) {
-      if (String(aData[k][0] || '').trim() === code) { s.deleteRow(k + 3); break; }
-    }
-  });
-
-  // ── Décrémenter les places ──
-  try {
-    var placesSheet = ss.getSheetByName(SHEET_PLACES);
-    if (placesSheet && placesSheet.getLastRow() > 1) {
-      var pData = placesSheet.getRange(2, 1, placesSheet.getLastRow() - 1, 5).getValues();
-      for (var p = 0; p < pData.length; p++) {
-        var pId = String(pData[p][0]).trim();
-        if (pId === placesIdCible || pId === actId) {
-          var inscrits = Math.max(0, (parseInt(pData[p][3]) || 0) - 1);
-          var capacity = parseInt(pData[p][2]) || 20;
-          placesSheet.getRange(p + 2, 4).setValue(inscrits);
-          placesSheet.getRange(p + 2, 5).setValue(capacity - inscrits);
-          break;
-        }
-      }
-    }
-  } catch(ep) { Logger.log('Places update KO: ' + ep.toString()); }
-
-  // ── Recalcul remise + email via helper central ──
-  var modifResultNR = appliquerModificationDossier({
-    ss: ss, code: code, actNomClean: actNomClean,
-    typeModif: 'suppression', estRegle: false,
-    totalPayeAvant: 0,
-    emailAdherent: emailAdherent, responsable: responsable,
-    commentaireAdmin: commentaireAdmin || '',
-    montantModifie: montantModifie === true || montantModifie === 'true',
-    membreNomLog: membreNom || ''
-  });
-
-  Logger.log('✅ supprimerActiviteNonRegleSheet v8.8 terminé — deleted:' + deleted);
-  return { deleted: deleted, nouveauTotal: modifResultNR.totalApres };
+// Anciennes signatures (appels existants)
+function supprimerActiviteDossierSheet(code, actNom, actId, membreNom, avoirMontant, placesIdParam, commentaireAdmin, montantModifie) {
+  return supprimerActiviteGAS(code, actNom, actId, membreNom, placesIdParam, commentaireAdmin, montantModifie, avoirMontant);
+}
+function supprimerActiviteNonRegleSheet(code, actNom, actId, membreNom, placesIdParam, nouveauTotal, commentaireAdmin, montantModifie) {
+  return supprimerActiviteGAS(code, actNom, actId, membreNom, placesIdParam, commentaireAdmin, montantModifie, 0);
 }
 
 

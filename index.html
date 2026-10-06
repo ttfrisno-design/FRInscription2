@@ -8301,7 +8301,8 @@ async function ouvrirModifierActivite(code) {
       animateur: actDef.animateur || '',
       dispo:     dispo,
       isno:      actDef.isno || 0,
-      hc:        actDef.hc   || 0
+      hc:        actDef.hc   || 0,
+      def:       actDef
     });
   });
   // Trier par activité puis jour/heure
@@ -8313,19 +8314,19 @@ async function ouvrirModifierActivite(code) {
   modal.innerHTML = `
     <div style="background:white;border-radius:16px;padding:28px;max-width:640px;width:92%;max-height:90vh;overflow-y:auto;">
       <h3 style="margin:0 0 4px;color:var(--dark);">🔄 Modifier une activité</h3>
-      <div style="font-size:12px;color:var(--gray);margin-bottom:16px;">Dossier ${code} — Total actuel : <strong>${totalActuel.toFixed(2)} €</strong></div>
+      <div style="font-size:12px;color:var(--gray);margin-bottom:16px;">Dossier ${escHtml(code)} — Total actuel : <strong>${Number(totalActuel).toFixed(2)} €</strong></div>
 
       <div style="margin-bottom:14px;">
         <label style="font-size:13px;font-weight:700;color:var(--dark);display:block;margin-bottom:6px;">Activité à remplacer :</label>
         <select id="mod-act-ancienne" style="width:100%;padding:8px;border:1.5px solid #c8e6c9;border-radius:8px;font-size:13px;">
-          ${lignes.map((r,i) => `<option value="${i}">${r.membre_prenom} ${r.membre_nom} — ${r.activite||r.activite_id} — ${r.jour||''} ${r.heure||''} (${r.tarif_brut||0} €)</option>`).join('')}
+          ${lignes.map((r,i) => `<option value="${i}">${escHtml(r.membre_prenom)} ${escHtml(r.membre_nom)} — ${escHtml(r.activite||r.activite_id)} — ${escHtml(r.jour||'')} ${escHtml(r.heure||'')} (${r.tarif_brut||0} €)${/attente/i.test(r.statut||'') ? ' — ⏳ attente' : ''}</option>`).join('')}
         </select>
       </div>
 
       <div style="margin-bottom:14px;">
         <label style="font-size:13px;font-weight:700;color:var(--dark);display:block;margin-bottom:6px;">Nouvelle activité / nouveau créneau :</label>
         <select id="mod-act-nouvelle" style="width:100%;padding:8px;border:1.5px solid #c8e6c9;border-radius:8px;font-size:13px;">
-          ${allActs.map((a,i) => `<option value="${i}">${a.nom} — ${a.jour} ${a.heure} (${isno ? a.isno : a.hc} € — ${a.dispo > 0 ? a.dispo + ' places' : '⛔ Complet'})</option>`).join('')}
+          ${allActs.map((a,i) => `<option value="${i}">${escHtml(a.nom)} — ${escHtml(a.jour)} ${escHtml(a.heure)} (${isno ? a.isno : a.hc} € — ${a.dispo > 0 ? a.dispo + ' places' : '⛔ Complet → liste d\'attente'})</option>`).join('')}
         </select>
       </div>
 
@@ -8361,29 +8362,32 @@ async function ouvrirModifierActivite(code) {
     const oldTarif = Number(oldLigne.tarif_brut) || 0;
     const tarifInput = document.getElementById('mod-act-tarif');
     if (resetTarif !== false) {
-      tarifInput.value = (isno ? Number(newAct.isno||0) : Number(newAct.hc||0)).toFixed(2);
+      tarifInput.value = Number(tarifActiviteMembre(newAct.def, { sexe: oldLigne.sexe }, isno) || 0).toFixed(2);
     }
     const newTarif = parseFloat(tarifInput.value) || 0;
     const diff = newTarif - oldTarif;
     // Déterminer si le dossier est réglé d'après le statut de la ligne
-    const statutLigne = (oldLigne.statut || '').toLowerCase();
-    const isPaidLigne = statutLigne.includes('règlement reçu') || statutLigne.includes('validé')
-      || (statutLigne.includes('inscrit') && !statutLigne.includes('attente') && !statutLigne.includes('cours'));
+    // Statut de règlement lu dans la feuille (colonne Statut paiement), comme le fait le serveur
+    const isPaidLigne = oldLigne.regle === true;
     const diffEl = document.getElementById('mod-act-diff');
     diffEl.style.display = 'block';
     if (!isPaidLigne) {
       // Non réglé : afficher le nouveau total à payer
       const nouveauTotal = totalActuel - oldTarif + newTarif;
       diffEl.style.background = nouveauTotal > 0 ? '#fff3e0' : '#f5f5f5';
-      diffEl.innerHTML = `<strong>${oldLigne.activite}</strong> (${oldTarif} €) → <strong>${newAct.nom}</strong> — ${newAct.jour} ${newAct.heure} (${newTarif} €)<br>`
-        + `<span style="color:#e65100;font-weight:700;">⚠️ Non réglé — Total à payer : <strong>${nouveauTotal.toFixed(2)} €</strong></span>`;
+      diffEl.innerHTML = `<strong>${escHtml(oldLigne.activite)}</strong> (${oldTarif} €) → <strong>${escHtml(newAct.nom)}</strong> — ${escHtml(newAct.jour)} ${escHtml(newAct.heure)} (${newTarif} €)<br>`
+        + `<span style="color:#e65100;font-weight:700;">⚠️ Non réglé — Total à payer estimé : <strong>${nouveauTotal.toFixed(2)} €</strong></span>`
+        + (newAct.dispo <= 0 ? '<br><span style="color:#c62828;font-weight:700;">⛔ Activité complète : le membre sera placé en liste d\'attente.</span>' : '')
+        + '<br><span style="font-size:11px;color:#777;">Estimation hors remise famille : le montant exact (remise 15 % recalculée) est calculé par le serveur.</span>';
     } else {
       // Réglé : afficher la différence
       diffEl.style.background = diff > 0 ? '#fff3e0' : diff < 0 ? '#e8f5e9' : '#f5f5f5';
-      diffEl.innerHTML = `<strong>${oldLigne.activite}</strong> (${oldTarif} €) → <strong>${newAct.nom}</strong> — ${newAct.jour} ${newAct.heure} (${newTarif} €)<br>`
-        + `✅ Réglé — Différence : <strong style="color:${diff>0?'#e65100':diff<0?'#2d6a4f':'#555'}">${diff>0?'+':''}${diff} €</strong>`
+      diffEl.innerHTML = `<strong>${escHtml(oldLigne.activite)}</strong> (${oldTarif} €) → <strong>${escHtml(newAct.nom)}</strong> — ${escHtml(newAct.jour)} ${escHtml(newAct.heure)} (${newTarif} €)<br>`
+        + `✅ Réglé — Différence estimée : <strong style="color:${diff>0?'#e65100':diff<0?'#2d6a4f':'#555'}">${diff>0?'+':''}${diff.toFixed(2)} €</strong>`
         + (diff > 0 ? ' <span style="color:#e65100;font-weight:700;">⚠️ Complément à régler</span>' : '')
-        + (diff < 0 ? ' <span style="color:#2d6a4f;font-weight:700;">✅ Avoir</span>' : '');
+        + (diff < 0 ? ' <span style="color:#2d6a4f;font-weight:700;">✅ Avoir</span>' : '')
+        + (newAct.dispo <= 0 ? '<br><span style="color:#c62828;font-weight:700;">⛔ Activité complète : le membre sera placé en liste d\'attente.</span>' : '')
+        + '<br><span style="font-size:11px;color:#777;">Estimation hors remise famille : l\'avoir ou le complément exact est calculé par le serveur.</span>';
     }
   }
   document.getElementById('mod-act-ancienne').addEventListener('change', () => updateDiff(true));
@@ -8404,7 +8408,7 @@ async function confirmerModifierActivite(code) {
   if (!oldLigne || !newAct) return;
 
   const oldTarif = Number(oldLigne.tarif_brut) || 0;
-  const defautTarif = d.isno ? Number(newAct.isno||0) : Number(newAct.hc||0);
+  const defautTarif = Number(tarifActiviteMembre(newAct.def, { sexe: oldLigne.sexe }, d.isno) || 0);
   const newTarif = parseFloat(document.getElementById('mod-act-tarif')?.value);
   const newTarifFinal = isNaN(newTarif) ? defautTarif : newTarif;
   const diff = newTarifFinal - oldTarif;
@@ -8442,7 +8446,10 @@ async function confirmerModifierActivite(code) {
     });
     const data = result && result.data ? result.data : result;
     if (data && data.status === 'ok') {
-      showAdminToast('✅ ' + (data.message || 'Activité modifiée'), 'green');
+      const dReel = Number(data.diff || 0);
+      showAdminToast('✅ Activité modifiée — nouveau total ' + Number(data.totalNet || 0).toFixed(2) + ' €'
+        + (dReel ? (data.regle ? (dReel > 0 ? ' — complément ' + dReel.toFixed(2) + ' €' : ' — avoir ' + (-dReel).toFixed(2) + ' €') : '') : '')
+        + (data.listeAttente ? ' — ⏳ liste d\'attente (activité complète)' : ''), 'green');
       state.placesLoaded = false;
       await loadPlaces(true);
       await chargerDossiersDepuisSheet();
@@ -10164,6 +10171,17 @@ function showAdminConfigBanner() {
 // ============================================================
 // AJOUT D'UNE ACTIVITÉ À UN DOSSIER EXISTANT (admin)
 // ============================================================
+// Tarif Isneauville : commune du dossier, sinon ville (les dossiers relus depuis le Sheet n'ont pas de commune)
+function estIsnoDossier(reg) {
+  const r = (reg && reg.responsable) || {};
+  if (r.commune) return r.commune === 'isno';
+  return String(r.ville || reg._ville || '').toLowerCase().includes('isneauville');
+}
+function membreAjoutSelectionne(reg) {
+  const idx = parseInt(document.getElementById('ajout-membre-select')?.value || '0');
+  return (reg && reg.members && reg.members[idx]) || null;
+}
+
 function ouvrirAjoutActivite(code) {
   if (!requireAdmin()) return;
   // Chercher d'abord dans allDossiersSheet (console admin), puis localStorage
@@ -10179,8 +10197,7 @@ function ouvrirAjoutActivite(code) {
   // estRegle : dossier validé (statut != pending_manual) dans Sheet ou localStorage
   const estRegle = reg.status === 'paid' || reg.status === 'validated'
                 || (reg._sheetStatut && reg._sheetStatut.toLowerCase().includes('inscrit'));
-  const isno     = reg.responsable ? reg.responsable.commune === 'isno'
-                 : (reg._ville || '').toLowerCase().includes('isneauville');
+  const isno     = estIsnoDossier(reg);
   const t        = reg.totals || {};
   const existingActCount = t.familyActCount || (reg._rows ? reg._rows.filter(
     r => !['attente','supprim'].some(k => (r.statut_inscription||'').toLowerCase().includes(k))
@@ -10210,7 +10227,7 @@ function ouvrirAjoutActivite(code) {
   }
   if (!_membresListe.length) _membresListe = [{nom: reg._nom||'', prenom: reg._prenom||'', id:0}];
   const membresOptions = _membresListe.map((m, idx) =>
-    `<option value="${idx}">${m.prenom} ${m.nom}</option>`
+    `<option value="${idx}">${escHtml(m.prenom)} ${escHtml(m.nom)}</option>`
   ).join('');
 
   const existing = document.getElementById('modal-ajout-activite');
@@ -10224,14 +10241,14 @@ function ouvrirAjoutActivite(code) {
       <div style="background:#1565c0;padding:18px 24px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
         <div>
           <div style="color:white;font-weight:700;font-size:15px;">➕ Ajouter une activité</div>
-          <div style="color:rgba(255,255,255,0.75);font-size:12px;">Dossier ${code} — ${_responsableNom}</div>
+          <div style="color:rgba(255,255,255,0.75);font-size:12px;">Dossier ${escHtml(code)} — ${escHtml(_responsableNom)}</div>
         </div>
         <button onclick="document.getElementById('modal-ajout-activite').remove();restoreStateApresAjout()" style="background:rgba(255,255,255,0.2);border:none;color:white;font-size:18px;cursor:pointer;border-radius:50%;width:30px;height:30px;">✕</button>
       </div>
       <div style="padding:12px 20px;flex-shrink:0;border-bottom:1px solid #eee;display:flex;align-items:center;gap:12px;">
         <div style="background:${estRegle ? '#fff3e0' : '#e8f4fd'};border:1px solid ${estRegle ? '#e65100' : '#1565c0'};border-radius:8px;padding:8px 14px;font-size:12px;color:${estRegle ? '#e65100' : '#1565c0'};flex:1;">
           ${estRegle
-            ? '💳 Dossier <strong>réglé</strong> — une facture pour la nouvelle activité sera envoyée'
+            ? '💳 Dossier <strong>réglé</strong> — le complément sera demandé à la famille (ou enregistré s\'il est déjà reçu)'
             : '📋 Dossier <strong>non réglé</strong> — le montant total sera mis à jour'}
         </div>
         <div style="flex-shrink:0;">
@@ -10294,7 +10311,7 @@ function rafraichirSemainierAjout(code) {
   const tmpId = 99999;
   state.responsable = {
     ...state.responsable,
-    commune: reg.responsable.commune || 'isno',
+    commune: estIsnoDossier(reg) ? 'isno' : 'hc',
     nom:     reg.responsable.nom,
     prenom:  reg.responsable.prenom
   };
@@ -10331,7 +10348,8 @@ function rafraichirSemainierAjout(code) {
     e.stopImmediatePropagation();
     e.preventDefault();
     // Vérifier que ce n'est pas déjà inscrit
-    if (modal._activitesExistantes && modal._activitesExistantes.has(actId)) {
+    const mSel = membreAjoutSelectionne(modal._reg);
+    if (mSel && (mSel.activities || []).includes(actId)) {
       showToast('Ce membre est déjà inscrit à cette activité', '#856404', 3000);
       return;
     }
@@ -10374,7 +10392,7 @@ function filtrerActivitesAjout(code) {
         const animLower = (act.animateur || '').toLowerCase();
         if (nomLower.indexOf(query) < 0 && jouLower.indexOf(query) < 0
             && lieLower.indexOf(query) < 0 && animLower.indexOf(query) < 0) continue;
-        if (activitesExistantes.has(act.id)) continue;
+        if ((membreAjoutSelectionne(reg)?.activities || []).includes(act.id)) continue;
         const placeInfo = state.places[act.id];
         const dispo = placeInfo ? placeInfo.available : '?';
         resultats.push({ act, dispo });
@@ -10383,7 +10401,7 @@ function filtrerActivitesAjout(code) {
   }
 
   if (resultats.length === 0) {
-    liste.innerHTML = '<div style="padding:20px;text-align:center;color:#999;font-size:13px;">Aucune activité disponible pour "' + query + '"</div>';
+    liste.innerHTML = '<div style="padding:20px;text-align:center;color:#999;font-size:13px;">Aucune activité disponible pour "' + escHtml(query) + '"</div>';
     return;
   }
 
@@ -10427,18 +10445,16 @@ async function selectionnerActiviteAjout(code, actId) {
 
   const membreIdx = parseInt(document.getElementById('ajout-membre-select')?.value || '0');
   const membre    = reg.members[membreIdx];
-  const isno      = reg.responsable.commune === 'isno';
+  const isno      = estIsnoDossier(reg);
+  if (membre && (membre.activities || []).includes(actId)) { showToast('Ce membre est déjà inscrit à cette activité', 'orange'); return; }
 
-  let prix = isno ? act.isno : act.hc;
-  if (isTTActivity(actId) && membre?.sexe === 'F') prix = Math.max(0, prix - 30);
-  prix = prorata(prix);
+  // Tarif de l'activité (Isneauville / hors commune, −30 € femme TT, prorata). La remise famille 15 %
+  // est recalculée par le serveur sur tout le dossier : on n'envoie jamais un tarif déjà remisé.
+  const prix = tarifActiviteMembre(act, membre, isno);
+  const prixApresRemise = prix;
+  const aRemiseApres = false, eligibleRemise = false, totalActsApres = existingActCount + 1;
 
-  const totalActsApres = existingActCount + 1;
-  const aRemiseApres   = totalActsApres >= 3;
-  const eligibleRemise = !['marche-nordic','country-init-a','country-init-j'].includes(actId) && !actId.startsWith('tt-');
-  let prixApresRemise  = prix;
-  if (aRemiseApres && eligibleRemise) prixApresRemise = Math.round(prix * 0.85 * 100) / 100;
-
+  try { await loadPlaces(true); } catch(e) {}
   const placeInfo = state.places[actId];
   const isFull = placeInfo && placeInfo.available <= 0;
 
@@ -10453,7 +10469,7 @@ async function selectionnerActiviteAjout(code, actId) {
     <div style="background:white;border-radius:14px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;">
       <div style="background:#1565c0;padding:16px 20px;">
         <div style="color:white;font-weight:700;font-size:14px;">➕ Confirmer l'ajout</div>
-        <div style="color:rgba(255,255,255,0.75);font-size:12px;">Dossier ${code} — ${membre?.prenom} ${membre?.nom}</div>
+        <div style="color:rgba(255,255,255,0.75);font-size:12px;">Dossier ${escHtml(code)} — ${escHtml(membre?.prenom || '')} ${escHtml(membre?.nom || '')}</div>
       </div>
       <div style="padding:20px;">
         <div style="font-weight:700;font-size:14px;color:#1a2e22;margin-bottom:4px;">${act.name.replace(/\n/g,' — ')}</div>
@@ -10469,13 +10485,13 @@ async function selectionnerActiviteAjout(code, actId) {
               🎉 Remise famille 15% : ${prix.toFixed(2)} € → <strong>${prixApresRemise.toFixed(2)} €</strong> (${totalActsApres} activités)</div>`
           : ''}
         <div style="background:#f0f7f3;border-radius:8px;padding:12px;text-align:center;">
-          <div style="font-size:11px;color:#666;margin-bottom:2px;">${estRegle ? 'TARIF À RÉGLER IMMÉDIATEMENT' : 'TARIF (montant dossier mis à jour)'}</div>
+          <div style="font-size:11px;color:#666;margin-bottom:2px;">TARIF DE L'ACTIVITÉ</div>
           ${isFull
             ? `<div style="font-size:24px;font-weight:900;color:#e65100;">⏳ Liste d'attente — 0 €</div>`
             : `<input id="ajout-montant-confirm" type="number" step="0.01" value="${prixApresRemise.toFixed(2)}"
                 style="width:140px;text-align:center;font-size:22px;font-weight:900;color:#1a2e22;border:1.5px solid #ccc;border-radius:8px;padding:4px 8px;">
                <span style="font-size:14px;color:#666;"> €</span>
-               <div style="font-size:10px;color:#999;margin-top:2px;">Modifiable si besoin</div>`}
+               <div style="font-size:10px;color:#999;margin-top:2px;">Modifiable si besoin — la remise famille 15 % éventuelle et l'adhésion d'un nouveau membre sont calculées par le serveur</div>`}
         </div>
         <div style="margin-top:12px;">
           <label style="font-size:11px;color:#666;display:block;margin-bottom:4px;">Commentaire admin (optionnel — visible par l'adhérent et tracé)</label>
@@ -10527,20 +10543,21 @@ function ouvrirModalPaiementAjout(code, actId, membreIdx, montant, existingActCo
     + '</div>'
     + '<div style="padding:20px;">'
     + '<div style="font-size:13px;color:rgba(255,255,255,0.7);margin-bottom:16px;">'
-    + 'Activit\u00e9\u00a0: <strong style="color:#ffab40">' + actNom + '</strong>'
-    + '<br>Montant\u00a0: <strong style="color:#52b788">' + montant.toFixed(2) + '\u00a0\u20ac</strong>'
-    + (existingActCount >= 2 ? '<br><small style="color:rgba(255,255,255,0.4);">Remise 15% appliqu\u00e9e (3e activit\u00e9 \u00e9ligible)</small>' : '')
+    + 'Activit\u00e9\u00a0: <strong style="color:#ffab40">' + escHtml(actNom) + '</strong>'
+    + '<br>Tarif de l\u2019activit\u00e9\u00a0: <strong style="color:#52b788">' + montant.toFixed(2) + '\u00a0\u20ac</strong>'
+    + '<br><small style="color:rgba(255,255,255,0.5);">Le compl\u00e9ment exact (remise famille, adh\u00e9sion d\u2019un nouveau membre) est calcul\u00e9 par le serveur.</small>'
     + '</div>'
     + '<div style="margin-bottom:12px;">'
     + '<label style="font-size:12px;color:rgba(255,255,255,0.6);display:block;margin-bottom:6px;">Mode de paiement</label>'
-    + '<select id="ajout-mode-pay" style="width:100%;background:#0d1f14;color:white;border:1px solid rgba(45,106,79,0.5);border-radius:7px;padding:8px 12px;font-size:13px;">'
-    + '<option value="cheque">Ch\u00e8que</option>'
-    + '<option value="especes">Esp\u00e8ces</option>'
-    + '<option value="helloasso">HelloAsso</option>'
+    + '<select id="ajout-mode-pay" onchange="document.getElementById(\'ajout-bloc-recu\').style.display=this.value===\'famille\'?\'none\':\'block\'" style="width:100%;background:#0d1f14;color:white;border:1px solid rgba(45,106,79,0.5);border-radius:7px;padding:8px 12px;font-size:13px;">'
+    + '<option value="famille" selected>\u00c0 r\u00e9gler par la famille (lien HelloAsso envoy\u00e9)</option>'
+    + '<option value="cheque">Ch\u00e8que re\u00e7u</option>'
+    + '<option value="especes">Esp\u00e8ces re\u00e7ues</option>'
+    + '<option value="helloasso">HelloAsso d\u00e9j\u00e0 pay\u00e9</option>'
     + '</select></div>'
-    + '<div style="margin-bottom:16px;">'
-    + '<label style="font-size:12px;color:rgba(255,255,255,0.6);display:block;margin-bottom:6px;">Montant r\u00e9gl\u00e9 (\u20ac)</label>'
-    + '<input id="ajout-montant-pay" type="number" step="0.01" value="' + montant.toFixed(2) + '" style="width:100%;background:#0d1f14;color:white;border:1px solid rgba(45,106,79,0.5);border-radius:7px;padding:8px 12px;font-size:14px;font-weight:700;box-sizing:border-box;">'
+    + '<div id="ajout-bloc-recu" style="margin-bottom:16px;display:none;">'
+    + '<label style="font-size:12px;color:rgba(255,255,255,0.6);display:block;margin-bottom:6px;">Montant re\u00e7u (\u20ac) \u2014 vide = compl\u00e9ment calcul\u00e9 par le serveur</label>'
+    + '<input id="ajout-montant-pay" type="number" step="0.01" min="0" placeholder="Compl\u00e9ment calcul\u00e9" style="width:100%;background:#0d1f14;color:white;border:1px solid rgba(45,106,79,0.5);border-radius:7px;padding:8px 12px;font-size:14px;font-weight:700;box-sizing:border-box;">'
     + '</div>'
     + '<div style="margin-bottom:16px;">'
     + '<label style="font-size:12px;color:rgba(255,255,255,0.6);display:block;margin-bottom:6px;">Commentaire admin (optionnel)</label>'
@@ -10548,71 +10565,33 @@ function ouvrirModalPaiementAjout(code, actId, membreIdx, montant, existingActCo
     + '</div>'
     + '<div style="display:flex;gap:10px;">'
     + '<button onclick="document.getElementById(\'modal-pay-ajout\').remove()" style="flex:1;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.6);border:none;border-radius:8px;padding:10px;font-size:13px;cursor:pointer;">Annuler</button>'
-    + '<button id="btn-confirm-ajout-pay" style="flex:2;background:var(--gold);color:var(--dark);border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">\u2705 Valider le r\u00e8glement</button>'
+    + '<button id="btn-confirm-ajout-pay" style="flex:2;background:var(--gold);color:var(--dark);border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;">\u2705 Valider l\u2019ajout</button>'
     + '</div></div></div>';
   document.body.appendChild(mc);
   mc.addEventListener('click', e => { if (e.target === mc) mc.remove(); });
   document.getElementById('btn-confirm-ajout-pay').addEventListener('click', async function() {
-    const mode    = document.getElementById('ajout-mode-pay')?.value || 'cheque';
-    const montantPay = parseFloat(document.getElementById('ajout-montant-pay')?.value) || montant;
+    const mode    = document.getElementById('ajout-mode-pay')?.value || 'famille';
+    const recu    = parseFloat(document.getElementById('ajout-montant-pay')?.value);
     const commentairePay = document.getElementById('ajout-commentaire-pay')?.value?.trim() || '';
-    const montantModifiePay = montantModifie || Math.abs(montantPay - montant) > 0.001;
     mc.remove();
-    await confirmerAjoutActivite(code, actId, membreIdx, montantPay, false, true, existingActCount, mode, commentairePay, montantModifiePay);
+    // Le tarif de l'activité reste « montant » ; le montant reçu est transmis à part
+    await confirmerAjoutActivite(code, actId, membreIdx, montant, false, mode !== 'famille', existingActCount,
+      mode === 'famille' ? '' : mode, commentairePay, montantModifie, mode === 'famille' ? null : (isNaN(recu) ? null : recu));
   });
 }
 
-async function confirmerAjoutActivite(code, actId, membreIdx, prixFinal, enListeAttente, estRegle, existingActCount, modePaiement, commentaireAdmin, montantModifie) {
+async function confirmerAjoutActivite(code, actId, membreIdx, prixFinal, enListeAttente, estRegle, existingActCount, modePaiement, commentaireAdmin, montantModifie, montantRecu) {
   restoreStateApresAjout();
-  const allRegs = JSON.parse(localStorage.getItem('fri_registrations') || '[]');
-  const regIdx  = allRegs.findIndex(r => r.code === code || String(r.id) === String(code));
-  if (regIdx < 0) { showToast('Dossier introuvable', 'red'); return; }
-
-  const reg    = allRegs[regIdx];
+  let reg = (window.allDossiersSheet || []).find(r => r.code === code || String(r.id) === String(code));
+  if (!reg) reg = JSON.parse(localStorage.getItem('fri_registrations') || '[]').find(r => r.code === code || String(r.id) === String(code));
+  if (!reg) { showToast('Dossier introuvable', 'red'); return; }
   const membre = reg.members[membreIdx];
   const act    = getActById(actId);
   if (!act || !membre) { showToast('Activité ou membre introuvable', 'red'); return; }
-
   const linkedId = act.linkedWith || null;
-
-  // 1. Mettre à jour localStorage
-  membre.activities = membre.activities || [];
-  if (!membre.activities.includes(actId))    membre.activities.push(actId);
-  if (linkedId && !membre.activities.includes(linkedId)) membre.activities.push(linkedId);
-
-  if (enListeAttente) {
-    if (!membre.waitingList) membre.waitingList = [];
-    if (!membre.waitingList.includes(actId)) membre.waitingList.push(actId);
-  }
-
-  // Calcul du nouveau total — fonctionne que le dossier soit réglé ou non
-  // On ajoute le prix de la nouvelle activité au total existant
-  const ancienTotal = reg.totals ? (reg.totals.grandTotal || 0) : 0;
-  let nouveauTotal  = ancienTotal;
-  if (!enListeAttente) {
-    nouveauTotal = Math.round((ancienTotal + prixFinal) * 100) / 100;
-    if (!reg.totals) reg.totals = { grandTotal: nouveauTotal, familyActCount: 1 };
-    else {
-      reg.totals.grandTotal     = nouveauTotal;
-      reg.totals.familyActCount = (reg.totals.familyActCount || 0) + 1;
-    }
-  }
-
-  localStorage.setItem('fri_registrations', JSON.stringify(allRegs));
-  console.log('[FRI] confirmerAjoutActivite — code:', code, 'actId:', actId,
-              'membre:', membre.prenom, membre.nom,
-              'estRegle:', estRegle, 'ancienTotal:', ancienTotal, 'nouveauTotal:', nouveauTotal,
-              'enListeAttente:', enListeAttente);
-
-  // 2. Envoyer vers GAS
-  const url = getAppsScriptUrl();
-  if (!url || url === 'VOTRE_URL_APPS_SCRIPT_ICI') {
-    showToast('⚠️ URL Apps Script non configurée', 'red'); return;
-  }
 
   const payload = {
     action:            'ajouterActiviteDossier',
-    _token:            FRI_SECRET_TOKEN,
     code:              code,
     actId:             actId,
     placesId:          siteToPlacesId(actId),
@@ -10627,46 +10606,38 @@ async function confirmerAjoutActivite(code, actId, membreIdx, prixFinal, enListe
     heure:             act.heure        || '',
     lieu:              act.lieu         || '',
     animateur:         act.animateur    || '',
-    tarif:             prixFinal,
-    nouveauTotal:      nouveauTotal,
-    estRegle:          estRegle === true || estRegle === 'true',
+    tarif:             prixFinal,                    // tarif de l'activité, sans remise famille
+    estRegle:          estRegle === true,            // règlement de l'ajout reçu par l'admin
+    reglementFamille:  !estRegle && !enListeAttente,
+    montantRecu:       (montantRecu === null || montantRecu === undefined) ? '' : montantRecu,
     statutInscription: enListeAttente ? 'Liste attente' : '',
     existingActCount:  existingActCount || 0,
     ffttPrice:         0,
-    modePaiement:      modePaiement || 'cheque',
+    modePaiement:      modePaiement || '',
     commentaireAdmin:  commentaireAdmin || '',
-    montantModifie:    montantModifie === true
+    montantModifie:    montantModifie === true,
+    // Même identifiant si la requête est renvoyée (délai dépassé) : le serveur n'ajoute qu'une fois
+    idEnvoi:           code + '-' + actId + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
   };
 
-  console.log('[FRI] Payload GAS:', JSON.stringify(payload).substring(0, 200));
-  console.log('[FRI] [DEBUG commentaire/montant] commentaireAdmin envoyé:', JSON.stringify(payload.commentaireAdmin), '| montantModifie envoyé:', payload.montantModifie);
-
+  showAdminToast('⏳ Ajout en cours…', 'blue');
+  let d = null;
   try {
-    const gasResult = await callAppsScriptFetch(url, payload);
-    console.log('[FRI] ✅ ajouterActiviteDossier envoyé', gasResult);
-    marquerDemandeAppliquee(code, actId);
-    // ── Mettre à jour grandTotal depuis le vrai total retourné par le GAS ──
-    // Le GAS recalcule remise 15% + FNSMR + FFTT → total exact
-    if (gasResult && gasResult.nouveauTotal && gasResult.nouveauTotal > 0) {
-      const allRegsUpd = JSON.parse(localStorage.getItem('fri_registrations') || '[]');
-      const regUpd = allRegsUpd.find(r => r.code === code || String(r.id) === String(code));
-      if (regUpd) {
-        if (!regUpd.totals) regUpd.totals = {};
-        regUpd.totals.grandTotal = gasResult.nouveauTotal;
-        localStorage.setItem('fri_registrations', JSON.stringify(allRegsUpd));
-        console.log('[FRI] grandTotal mis à jour depuis GAS :', gasResult.nouveauTotal);
-      }
-    }
-  } catch(e) {
-    console.error('[FRI] ❌ Ajout GAS KO:', e);
-    showToast('⚠️ Erreur envoi vers GAS : ' + e.message, 'red', 6000);
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), payload);
+    d = r && r.data;
+  } catch(e) { d = { status: 'error', message: e.message }; }
+  if (!d || d.status !== 'ok') {
+    showAdminToast('❌ Ajout non effectué : ' + ((d && d.message) || 'serveur injoignable'), 'red');
+    return;
   }
-
-  showToast(`✅ "${act.name.replace(/\n/g,' ')}" ajoutée au dossier ${code}`, '#1565c0', 5000);
-  renderAdmin();
-  renderAdminStats();
+  marquerDemandeAppliquee(code, actId);
+  showToast(`✅ "${act.name.replace(/\n/g, ' ')}" ajoutée au dossier ${code}`
+    + (d.listeAttente ? ' — ⏳ liste d\'attente (complet)' : ' — nouveau total ' + Number(d.nouveauTotal || 0).toFixed(2) + ' €')
+    + (d.supplement > 0 && !estRegle ? ' — complément demandé : ' + Number(d.supplement).toFixed(2) + ' €' : ''), '#1565c0', 6000);
+  try { await chargerDossiersDepuisSheet(); } catch(e) {}
+  try { renderAdmin(); } catch(e) {}
+  try { renderAdminStats(); } catch(e) {}
 }
-
 
 
 
@@ -10676,34 +10647,22 @@ function ouvrirSupprActivite(code) {
   const reg = allRegs.find(r => r.code === code || String(r.id) === String(code));
   if (!reg) { showToast('Dossier introuvable', 'red'); return; }
 
-  // Construire la liste des activités de tous les membres — dédupliquer par placesId
+  // Une ligne par membre et par activité (les créneaux TT liés partagent le même onglet)
   const lignes = [];
   const dejavu = new Set();
   reg.members.forEach(m => {
     (m.activities || []).forEach(actId => {
       const act = getActById(actId);
       if (!act) return;
-      // Clé unique = membre + placesId (évite les doublons TT comp/sans qui partagent le même onglet)
       const placesId = siteToPlacesId(actId);
       const dedupKey = m.id + '_' + placesId;
       if (dejavu.has(dedupKey)) return;
       dejavu.add(dedupKey);
-      const isno = (reg.responsable.commune === 'isno');
-      const prix = isno ? act.isno : act.hc;
-      lignes.push({ membreId: m.id, membreNom: m.prenom + ' ' + m.nom, actId, placesId, actNom: act.name.replace(/\n/g, ' — '), prix, jour: act.jour, heure: act.heure });
+      const enAttente = (m.waitingList || []).includes(actId);
+      lignes.push({ membreId: m.id, membreNom: (m.prenom + ' ' + m.nom).trim(), actId, placesId, actNom: act.name.replace(/\n/g, ' — '), jour: act.jour, heure: act.heure, enAttente });
     });
   });
-
   if (lignes.length === 0) { showToast('Aucune activité dans ce dossier', 'orange'); return; }
-
-  // Calculer les totaux pour les 15% de remise
-  const t = reg.totals || {};
-  const familyActCount = t.familyActCount || lignes.length;
-  const aRemise = familyActCount >= 3;
-
-  // Détecter si le dossier est réglé (défini ici pour l'utiliser dans le template)
-  const estRegle = reg.status && reg.status !== 'pending_manual';
-  console.log('[FRI] ouvrirSupprActivite — code:', code, 'status:', reg.status, 'estRegle:', estRegle);
 
   const modal = document.createElement('div');
   modal.id = 'modal-suppr-activite';
@@ -10713,86 +10672,54 @@ function ouvrirSupprActivite(code) {
       <div style="background:#e65100;padding:18px 24px;display:flex;justify-content:space-between;align-items:center">
         <div>
           <div style="color:white;font-weight:700;font-size:15px">➖ Supprimer une activité</div>
-          <div style="color:rgba(255,255,255,0.7);font-size:12px">Dossier ${code} — ${reg.responsable.prenom} ${reg.responsable.nom}</div>
+          <div style="color:rgba(255,255,255,0.7);font-size:12px">Dossier ${escHtml(code)} — ${escHtml(reg.responsable.prenom)} ${escHtml(reg.responsable.nom)}</div>
         </div>
         <button onclick="document.getElementById('modal-suppr-activite').remove()" style="background:rgba(255,255,255,0.2);border:none;color:white;font-size:18px;cursor:pointer;border-radius:50%;width:30px;height:30px">✕</button>
       </div>
       <div style="padding:20px">
-        <p style="font-size:13px;color:#555;margin-bottom:14px">Sélectionnez l'activité à supprimer.</p>
-        <div style="background:${estRegle ? '#fff3e0' : '#e8f4fd'};border:1px solid ${estRegle ? '#e65100' : '#1565c0'};border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:${estRegle ? '#e65100' : '#1565c0'};">
-          ${estRegle
-            ? '💳 Dossier <strong>réglé</strong> — la ligne restera visible en orange + avoir crédité'
-            : '📋 Dossier <strong>non réglé</strong> — suppression complète + montant mis à jour'}
-        </div>
+        <p style="font-size:13px;color:#555;margin-bottom:14px">Sélectionnez l'activité à supprimer. Le montant (avoir ou nouveau total) est calculé par le serveur à l'étape suivante.</p>
         <div id="liste-activites-suppr">
-          ${lignes.map((l, i) => {
-            // Détecter si l'activité est en liste d'attente
-            const membreObj  = reg.members.find(m => m.id === l.membreId);
-            const isWaitingL = membreObj && (membreObj.waitingList||[]).includes(l.actId);
-            // Calcul avoir : 0 si liste d'attente
-            const actObj = getActById(l.actId) || {};
-            let avoir = isWaitingL ? 0 : l.prix;
-            if (!isWaitingL && aRemise && actObj.remiseEligible !== false && !actObj.isTT) {
-              avoir = Math.round(avoir * 0.85 * 100) / 100;
-            }
-            if (!isWaitingL) avoir = Math.max(0, Math.round((avoir - FRAIS_DOSSIER_SUPPRESSION) * 100) / 100);
-            const borderColor = isWaitingL ? '#e65100' : '#ddd';
-            const avoirHtml = isWaitingL
-              ? '<div style="font-size:13px;color:#e65100;font-weight:700">⏳ Liste d\'attente</div><div style="font-size:10px;color:#888">0 € — aucun avoir</div>'
-              : '<div style="font-size:13px;color:#e65100;font-weight:700">Avoir : ' + avoir.toFixed(2) + ' €</div>'
-                + '<div style="font-size:10px;color:#888">frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € déduits' + (aRemise ? ' · remise 15%' : '') + '</div>';
-            return `<div style="border:1px solid ${borderColor};border-radius:8px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:background 0.15s;background:${isWaitingL ? '#fff3e0' : 'white'}"
-                      onmouseenter="this.style.background='#fff3e0'"
-                      onmouseleave="this.style.background='${isWaitingL ? '#fff3e0' : 'white'}'"
-                      onclick="confirmerSupprActivite('${code}',${i})">
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <div>
-                  <div style="font-weight:700;color:#1a2e22;font-size:13px">${l.actNom}${isWaitingL ? ' <span style="font-size:10px;background:#e65100;color:white;border-radius:4px;padding:1px 5px;">⏳ Attente</span>' : ''}</div>
-                  <div style="font-size:12px;color:#888">${l.membreNom} · ${l.jour} ${l.heure}</div>
-                </div>
-                <div style="text-align:right">${avoirHtml}</div>
-              </div>
-            </div>`;
-          }).join('')}
+          ${lignes.map((l, i) => `<div style="border:1px solid ${l.enAttente ? '#e65100' : '#ddd'};border-radius:8px;padding:12px 14px;margin-bottom:8px;cursor:pointer;background:${l.enAttente ? '#fff3e0' : 'white'}"
+                      onmouseenter="this.style.background='#fff3e0'" onmouseleave="this.style.background='${l.enAttente ? '#fff3e0' : 'white'}'"
+                      onclick="confirmerSupprActivite('${escHtml(code)}',${i})">
+              <div style="font-weight:700;color:#1a2e22;font-size:13px">${escHtml(l.actNom)}${l.enAttente ? ' <span style="font-size:10px;background:#e65100;color:white;border-radius:4px;padding:1px 5px;">⏳ Attente</span>' : ''}</div>
+              <div style="font-size:12px;color:#888">${escHtml(l.membreNom)} · ${escHtml(l.jour || '')} ${escHtml(l.heure || '')}</div>
+            </div>`).join('')}
         </div>
       </div>
     </div>`;
-
-  // Stocker les données pour confirmerSupprActivite
   modal._lignes = lignes;
   modal._reg    = reg;
-  modal._aRemise = aRemise;
   document.body.appendChild(modal);
 }
 
 async function confirmerSupprActivite(code, ligneIdx) {
   const modal = document.getElementById('modal-suppr-activite');
   if (!modal) return;
-  const lignes  = modal._lignes;
-  const reg     = modal._reg;
-  const aRemise = modal._aRemise;
-  const l       = lignes[ligneIdx];
+  const l = modal._lignes[ligneIdx];
+  if (!l) return;
 
-  const actObj  = getActById(l.actId) || {};
-  const membre  = reg.members.find(m => m.id === l.membreId);
+  // Montant exact calculé par le serveur : statut réglé lu dans la feuille, remise famille recalculée,
+  // adhésion jamais remboursée, frais de dossier retenus
+  showAdminToast('⏳ Calcul du montant…', 'blue');
+  let sim = null;
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: 'simulerSuppressionActivite', code, actId: l.actId,
+      placesId: l.placesId || siteToPlacesId(l.actId), actNom: l.actNom, membreNom: l.membreNom });
+    sim = r && r.data;
+  } catch(e) { sim = { status: 'error', message: e.message }; }
+  if (!sim || sim.status !== 'ok') { showAdminToast('⚠️ ' + ((sim && sim.message) || 'Serveur injoignable'), 'red'); return; }
 
-  // Détecter si le dossier est réglé
-  const estRegle = reg.status && reg.status !== 'pending_manual';
+  const estRegle = !!sim.regle;
+  const euro = v => Number(v || 0).toFixed(2) + ' €';
+  const explication = sim.enAttente
+    ? 'Inscription en <strong>liste d\'attente</strong> : aucune place libérée, aucun montant.'
+    : estRegle
+      ? 'Dossier <strong>réglé</strong> → ligne gardée en orange dans Inscriptions, avoir crédité.<br>'
+        + 'Réglé : ' + euro(sim.totalAvant) + ' · nouveau total : ' + euro(sim.totalApres)
+        + ' · frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus · adhésion non remboursée.'
+      : 'Dossier <strong>non réglé</strong> → ligne effacée.<br>Nouveau total à régler : <strong>' + euro(sim.totalApres) + '</strong> (au lieu de ' + euro(sim.totalAvant) + ').';
 
-  // Calcul avoir (seulement si réglé) : cotisation remboursée, adhésion jamais remboursée,
-  // frais de dossier retenus (le serveur recalcule le montant exact)
-  let avoir = 0;
-  if (estRegle) {
-    avoir = l.prix;
-    if (aRemise && actObj.remiseEligible !== false && !actObj.isTT) {
-      avoir = Math.round(avoir * 0.85 * 100) / 100;
-    }
-    avoir = Math.max(0, Math.round((avoir - FRAIS_DOSSIER_SUPPRESSION) * 100) / 100);
-  }
-
-  const montantParDefaut = estRegle ? avoir : l.prix;
-
-  // ── Modal de confirmation avec montant modifiable + commentaire admin ──
   document.getElementById('modal-confirm-suppr')?.remove();
   const mcs = document.createElement('div');
   mcs.id = 'modal-confirm-suppr';
@@ -10801,22 +10728,17 @@ async function confirmerSupprActivite(code, ligneIdx) {
     <div style="background:white;border-radius:14px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;">
       <div style="background:#c0392b;padding:16px 20px;">
         <div style="color:white;font-weight:700;font-size:14px;">🗑️ Confirmer la suppression</div>
-        <div style="color:rgba(255,255,255,0.8);font-size:12px;">Dossier ${code} — ${l.membreNom}</div>
+        <div style="color:rgba(255,255,255,0.8);font-size:12px;">Dossier ${escHtml(code)} — ${escHtml(l.membreNom)}</div>
       </div>
       <div style="padding:20px;">
-        <div style="font-weight:700;font-size:14px;color:#1a2e22;margin-bottom:10px;">${l.actNom}</div>
+        <div style="font-weight:700;font-size:14px;color:#1a2e22;margin-bottom:10px;">${escHtml(l.actNom)}</div>
         <div style="background:#fdf3f2;border:1px solid #e74c3c;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#7a2e22;">
-          ${estRegle
-            ? 'Activité déjà réglée → fond orange dans Inscriptions, un avoir sera crédité.<br>'
-              + 'Cotisation remboursée <strong>moins ' + FRAIS_DOSSIER_SUPPRESSION + ' € de frais de dossier</strong> (non remboursables) ; '
-              + 'l\'adhésion de 15 € n\'est pas remboursée.'
-            : 'Activité non réglée → suppression complète des lignes, le montant dû sera mis à jour.'}
-          <br><strong>Cette action est irréversible.</strong>
+          ${explication}<br><strong>Cette action est irréversible.</strong>
         </div>
-        <label style="font-size:11px;color:#666;display:block;margin-bottom:4px;">${estRegle ? 'Avoir à créditer (€)' : 'Montant de l\'activité (€)'}</label>
-        <input id="suppr-montant-confirm" type="number" step="0.01" value="${montantParDefaut.toFixed(2)}"
-          style="width:100%;box-sizing:border-box;font-size:16px;font-weight:700;color:#1a2e22;border:1.5px solid #ccc;border-radius:8px;padding:8px 10px;margin-bottom:14px;">
-        <label style="font-size:11px;color:#666;display:block;margin-bottom:4px;">Commentaire admin (optionnel — visible par l'adhérent et tracé)</label>
+        ${estRegle ? `<label for="suppr-montant-confirm" style="font-size:11px;color:#666;display:block;margin-bottom:4px;">Avoir à créditer (€) — modifiable</label>
+        <input id="suppr-montant-confirm" type="number" step="0.01" min="0" value="${Number(sim.avoir || 0).toFixed(2)}"
+          style="width:100%;box-sizing:border-box;font-size:16px;font-weight:700;color:#1a2e22;border:1.5px solid #ccc;border-radius:8px;padding:8px 10px;margin-bottom:14px;">` : ''}
+        <label for="suppr-commentaire-admin" style="font-size:11px;color:#666;display:block;margin-bottom:4px;">Commentaire admin (optionnel — visible par l'adhérent et tracé)</label>
         <textarea id="suppr-commentaire-admin" rows="2" placeholder="Ex : suppression suite à..."
           style="width:100%;box-sizing:border-box;border:1.5px solid #ccc;border-radius:8px;padding:8px 10px;font-size:12px;font-family:inherit;resize:vertical;"></textarea>
       </div>
@@ -10830,127 +10752,36 @@ async function confirmerSupprActivite(code, ligneIdx) {
   document.body.appendChild(mcs);
   mcs.addEventListener('click', e => { if (e.target === mcs) mcs.remove(); });
   document.getElementById('btn-confirmer-suppr-activite').addEventListener('click', async () => {
-    const montantSaisi = parseFloat(document.getElementById('suppr-montant-confirm')?.value);
-    const montantFinal = isNaN(montantSaisi) ? montantParDefaut : montantSaisi;
+    const saisi = parseFloat(document.getElementById('suppr-montant-confirm')?.value);
+    const avoir = estRegle && !isNaN(saisi) ? Math.max(0, saisi) : Number(sim.avoir || 0);
+    const montantModifie = estRegle && Math.abs(avoir - Number(sim.avoir || 0)) > 0.001;
     const commentaireAdmin = document.getElementById('suppr-commentaire-admin')?.value?.trim() || '';
-    const montantModifie = Math.abs(montantFinal - montantParDefaut) > 0.001;
-    if (estRegle) avoir = montantFinal; else l.prix = montantFinal;
     mcs.remove();
-    await executerSuppressionActivite(code, l, membre, estRegle, avoir, aRemise, actObj, commentaireAdmin, montantModifie);
+    await executerSuppressionActivite(code, l, avoir, commentaireAdmin, montantModifie);
   });
 }
 
-async function executerSuppressionActivite(code, l, membre, estRegle, avoir, aRemise, actObj, commentaireAdmin, montantModifie) {
+async function executerSuppressionActivite(code, l, avoir, commentaireAdmin, montantModifie) {
   document.getElementById('modal-suppr-activite')?.remove();
-
-  console.log('[FRI] Suppression activité — code:', code, 'estRegle:', estRegle, 'actId:', l.actId);
-
-  // ── CAS 1 : Non réglé — suppression complète ──
-  if (!estRegle) {
-    // 1a. Supprimer l'activité dans localStorage et recalculer les totaux
-    const allRegs = JSON.parse(localStorage.getItem('fri_registrations') || '[]');
-    const regIdx  = allRegs.findIndex(r => r.code === code || String(r.id) === String(code));
-    if (regIdx >= 0 && membre) {
-      // Trouver aussi l'actId lié (linkedWith)
-      const actObj2 = getActById(l.actId) || {};
-      const linkedId = actObj2.linkedWith || null;
-
-      allRegs[regIdx].members.forEach(m => {
-        if (m.id === membre.id) {
-          // Supprimer l'actId ET son lié s'il existe
-          m.activities = (m.activities || []).filter(a => a !== l.actId && a !== linkedId);
-          // Supprimer aussi de la waitingList si présent
-          if (m.waitingList) {
-            m.waitingList = Array.from(m.waitingList || []).filter(a => a !== l.actId && a !== linkedId);
-          }
-        }
-      });
-      // Recalcul du grandTotal
-      const regMaj = allRegs[regIdx];
-      if (regMaj.totals) {
-        let prixActe = l.prix;
-        if (aRemise && actObj.remiseEligible !== false && !actObj.isTT) {
-          prixActe = Math.round(prixActe * 0.85 * 100) / 100;
-        }
-        regMaj.totals.grandTotal     = Math.max(0, (regMaj.totals.grandTotal    || 0) - prixActe);
-        regMaj.totals.familyActCount = Math.max(0, (regMaj.totals.familyActCount || 1) - 1);
-      }
-      localStorage.setItem('fri_registrations', JSON.stringify(allRegs));
-      console.log('[FRI] localStorage mis à jour — activité supprimée, nouveau total:', regMaj.totals?.grandTotal);
-    }
-
-    // 1b. Supprimer dans le Sheet via GAS (action = supprimerActiviteNonRegle)
-    const url = getAppsScriptUrl();
-    if (url && url !== 'VOTRE_URL_APPS_SCRIPT_ICI') {
-      try {
-        const gasResultSuppr = await callAppsScriptFetch(url, {
-          action:       'supprimerActiviteNonRegle',
-          _token:       FRI_SECRET_TOKEN,
-          code:         code,
-          actId:        l.actId,
-          placesId:     l.placesId || siteToPlacesId(l.actId),
-          actNom:       l.actNom,
-          membreNom:    l.membreNom,
-          nouveauTotal: allRegs.find(r => r.code === code)?.totals?.grandTotal || 0,
-          commentaireAdmin: commentaireAdmin || '',
-          montantModifie:   montantModifie === true
-        });
-        marquerDemandeAppliquee(code, l.actId);
-        // ── Mettre à jour grandTotal depuis le vrai total retourné par le GAS ──
-        await chargerDossiersDepuisSheet();
-        try { renderAdmin(); } catch(e) {}
-        try { renderAdminStats(); } catch(e) {}
-      } catch(e) {
-        console.warn('Suppression non-réglé GAS KO:', e);
-        try { renderAdmin(); } catch(e2) {}
-      }
-    }
-
-    showToast(`✅ "${l.actNom}" supprimée — montant mis à jour`, 'green');
-
-  // ── CAS 2 : Réglé — fond orange + avoir ──
-  } else {
-    // 2a. Ajouter l'avoir dans localStorage
-    const allRegs = JSON.parse(localStorage.getItem('fri_registrations') || '[]');
-    const regIdx  = allRegs.findIndex(r => r.code === code || String(r.id) === String(code));
-    if (regIdx >= 0) {
-      allRegs[regIdx].responsable.avoirMontant = (allRegs[regIdx].responsable.avoirMontant || 0) + avoir;
-      allRegs[regIdx].responsable.avoirDetail  = (allRegs[regIdx].responsable.avoirDetail  || '') + `${l.actNom} (${avoir.toFixed(2)}€) ; `;
-      // NE PAS supprimer l'activité du localStorage — elle reste visible en orange
-      localStorage.setItem('fri_registrations', JSON.stringify(allRegs));
-    }
-
-    // 2b. Fond orange dans Sheet via GAS (comportement actuel)
-    const url = getAppsScriptUrl();
-    if (url && url !== 'VOTRE_URL_APPS_SCRIPT_ICI') {
-      try {
-        await callAppsScriptFetch(url, {
-          action:     'supprimerActiviteDossier',
-          _token:     FRI_SECRET_TOKEN,
-          code:       code,
-          actId:      l.actId,
-          placesId:   l.placesId || siteToPlacesId(l.actId),
-          actNom:     l.actNom,
-          membreNom:  l.membreNom,
-          avoir:      avoir,
-          commentaireAdmin: commentaireAdmin || '',
-          montantModifie:   montantModifie === true
-        });
-        marquerDemandeAppliquee(code, l.actId);
-        // Recharger depuis le Sheet — le total AF fait foi
-        await chargerDossiersDepuisSheet();
-        try { renderAdmin(); } catch(e) {}
-        try { renderAdminStats(); } catch(e) {}
-      } catch(e) {
-        console.warn('Suppression activité GAS KO:', e);
-        try { renderAdmin(); } catch(e2) {}
-      }
-    }
-
-    showToast(`✅ "${l.actNom}" supprimée — avoir ${avoir.toFixed(2)} €`, 'green');
+  showAdminToast('⏳ Suppression en cours…', 'orange');
+  let d = null;
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), {
+      action: 'supprimerActiviteDossier', code, actId: l.actId,
+      placesId: l.placesId || siteToPlacesId(l.actId), actNom: l.actNom, membreNom: l.membreNom,
+      avoir, commentaireAdmin, montantModifie: montantModifie === true
+    });
+    d = r && r.data;
+  } catch(e) { d = { status: 'error', message: e.message }; }
+  if (!d || d.status !== 'ok') {
+    showAdminToast('❌ Suppression non effectuée : ' + ((d && d.message) || 'serveur injoignable'), 'red');
     return;
   }
-
+  marquerDemandeAppliquee(code, l.actId);
+  showToast(d.regle
+    ? `✅ "${l.actNom}" supprimée — avoir ${Number(d.avoir || 0).toFixed(2)} €`
+    : `✅ "${l.actNom}" supprimée — nouveau total ${Number(d.nouveauTotal || 0).toFixed(2)} €`, 'green');
+  try { await chargerDossiersDepuisSheet(); } catch(e) {}
   try { renderAdmin(); } catch(e) {}
   try { renderAdminStats(); } catch(e) {}
 }

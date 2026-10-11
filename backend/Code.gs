@@ -72,6 +72,10 @@ function dossiersDriveParNom(nom) { return DriveApp.getFoldersByName(nomDossierD
 function creerDossierDrive(nom) { return DriveApp.createFolder(nomDossierDrive(nom)); }
 
 // Remplace GmailApp.sendEmail (mêmes paramètres). En test, tout part vers FRI_EMAIL_TEST.
+// Mailjet (propriétés MAILJET_API_KEY + MAILJET_SECRET_KEY) : voie principale quand il est configuré —
+// meilleure délivrabilité (les emails Gmail sont bloqués par Free) et pas de quota Gmail.
+// MAILJET_USAGE = 'tout' (défaut) ou 'free' (seulement les adresses Free / Alice / Libertysurf).
+// En cas d'échec de Mailjet, ou sans Mailjet :
 // Quota Gmail (compte gratuit : 100 destinataires par jour, cc/cci compris) :
 //   1. tant qu'il reste du quota → Gmail ;
 //   2. quota presque épuisé → les copies destinées au FRI attendent, les familles passent d'abord ;
@@ -97,7 +101,19 @@ function _nbDestinataires(dest, options) {
   return [dest, options.cc, options.bcc].join(',').split(',').filter(function(a) { return a.trim(); }).length;
 }
 
+var DOMAINES_FREE = ['free.fr', 'aliceadsl.fr', 'alicepro.fr', 'libertysurf.fr', 'freesbee.fr', 'worldonline.fr', 'online.fr'];
+function _contientAdresseFree(dest, options) {
+  return [dest, options.cc, options.bcc].join(',').toLowerCase().split(',').some(function(a) {
+    var dom = a.trim().split('@')[1] || '';
+    return DOMAINES_FREE.indexOf(dom) >= 0;
+  });
+}
+
 function _envoyerAvecQuota(dest, sujet, corps, options, pourLeFRI) {
+  // Mailjet d'abord (toutes les adresses, ou seulement celles de Free selon MAILJET_USAGE)
+  if (_mailjetConfigure() && (_props.getProperty('MAILJET_USAGE') !== 'free' || _contientAdresseFree(dest, options))) {
+    if (_envoyerParMailjet(dest, sujet, corps, options)) return true;
+  }
   var besoin = _nbDestinataires(dest, options);
   var reste = 0;
   try { reste = MailApp.getRemainingDailyQuota(); } catch(e) { reste = besoin; }
@@ -109,6 +125,54 @@ function _envoyerAvecQuota(dest, sujet, corps, options, pourLeFRI) {
   if (_envoyerParBrevo(dest, sujet, corps, options)) return true;
   _mettreEnFileEmail(dest, sujet, corps, options);
   return false;
+}
+
+// ── Mailjet (API v3.1). Adresse d'expédition : MAILJET_SENDER, validée dans Mailjet
+//    (idéalement sur le domaine fri-isneauville.fr avec SPF et DKIM configurés) ──
+function _mailjetConfigure() {
+  return !!(_props.getProperty('MAILJET_API_KEY') && _props.getProperty('MAILJET_SECRET_KEY'));
+}
+
+function _envoyerParMailjet(dest, sujet, corps, options) {
+  if (!_mailjetConfigure()) return false;
+  try {
+    var liste = function(v) { return String(v || '').split(',').map(function(a) { return a.trim(); }).filter(String).map(function(a) { return {Email: a}; }); };
+    var msg = {
+      From: {Email: _props.getProperty('MAILJET_SENDER') || EMAIL_ADMIN, Name: options.name || NOM_ASSO},
+      To: liste(dest),
+      Subject: sujet,
+      TextPart: corps || (options.htmlBody ? String(options.htmlBody).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ' '),
+      ReplyTo: {Email: options.replyTo || EMAIL_ADMIN}
+    };
+    if (options.htmlBody) msg.HTMLPart = options.htmlBody;
+    if (options.cc) msg.Cc = liste(options.cc);
+    if (options.bcc) msg.Bcc = liste(options.bcc);
+    if (options.attachments && options.attachments.length) {
+      msg.Attachments = options.attachments.map(function(b) {
+        var blob = b.getBlob ? b.getBlob() : b;
+        return {ContentType: blob.getContentType() || 'application/octet-stream', Filename: blob.getName() || 'piece-jointe',
+                Base64Content: Utilities.base64Encode(blob.getBytes())};
+      });
+    }
+    var auth = Utilities.base64Encode(_props.getProperty('MAILJET_API_KEY') + ':' + _props.getProperty('MAILJET_SECRET_KEY'));
+    var rep = UrlFetchApp.fetch('https://api.mailjet.com/v3.1/send', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: {Authorization: 'Basic ' + auth}, payload: JSON.stringify({Messages: [msg]})
+    });
+    var code = rep.getResponseCode(), ok = false;
+    try { ok = code === 200 && JSON.parse(rep.getContentText()).Messages[0].Status === 'success'; } catch(e) {}
+    Logger.log('Mailjet ' + code + ' pour ' + dest + (ok ? '' : ' : ' + rep.getContentText().slice(0, 300)));
+    return ok;
+  } catch(e) { Logger.log('Mailjet KO : ' + e); return false; }
+}
+
+// À lancer depuis l'éditeur : envoie un email d'essai par Mailjet à l'adresse indiquée
+function testerMailjet(adresse) {
+  adresse = adresse || EMAIL_ADMIN;
+  if (!_mailjetConfigure()) { Logger.log('Mailjet non configuré : ajoutez MAILJET_API_KEY et MAILJET_SECRET_KEY dans les propriétés du script.'); return; }
+  var ok = _envoyerParMailjet(adresse, '[FRI] Essai d\'envoi par Mailjet', 'Cet email a été envoyé par Mailjet depuis le site d\'inscriptions.',
+    {htmlBody: '<p>Cet email a été envoyé par <b>Mailjet</b> depuis le site d\'inscriptions du FRI.</p>', name: NOM_ASSO});
+  Logger.log(ok ? '✅ Email d\'essai envoyé à ' + adresse : '❌ Échec — voir le message Mailjet ci-dessus');
 }
 
 // ── Relais Brevo (facultatif) : propriétés BREVO_API_KEY et BREVO_SENDER (adresse validée chez Brevo) ──
@@ -198,7 +262,8 @@ function envoyerFileEmails() {
       var besoin = _nbDestinataires(m.dest, opts), reste = 0;
       try { reste = MailApp.getRemainingDailyQuota(); } catch(e) {}
       var ok = false;
-      if (reste >= besoin) { try { GmailApp.sendEmail(m.dest, m.sujet, m.corps, opts); ok = true; } catch(e) { Logger.log('File Gmail KO : ' + e); } }
+      if (_mailjetConfigure()) ok = _envoyerParMailjet(m.dest, m.sujet, m.corps, opts);
+      if (!ok && reste >= besoin) { try { GmailApp.sendEmail(m.dest, m.sujet, m.corps, opts); ok = true; } catch(e) { Logger.log('File Gmail KO : ' + e); } }
       if (!ok) ok = _envoyerParBrevo(m.dest, m.sujet, m.corps, opts);
       if (!ok) { restants++; continue; }
       sh.getRange(i + 2, 4, 1, 2).setValues([['✅ Envoyé', Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm')]]);
@@ -217,6 +282,7 @@ function etatQuotaEmails() {
   var enFile = sh.getLastRow() < 2 ? 0 : sh.getRange(2, 4, sh.getLastRow() - 1, 1).getValues()
     .filter(function(r) { return String(r[0]).indexOf('En attente') >= 0; }).length;
   Logger.log('Quota Gmail restant aujourd\'hui : ' + MailApp.getRemainingDailyQuota() + ' destinataire(s) ; emails en file : ' + enFile
+    + ' ; Mailjet : ' + (_mailjetConfigure() ? 'configuré (' + (_props.getProperty('MAILJET_USAGE') || 'tout') + ')' : 'non configuré')
     + ' ; relais Brevo : ' + (_props.getProperty('BREVO_API_KEY') ? 'configuré' : 'non configuré'));
 }
 

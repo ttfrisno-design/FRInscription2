@@ -72,14 +72,152 @@ function dossiersDriveParNom(nom) { return DriveApp.getFoldersByName(nomDossierD
 function creerDossierDrive(nom) { return DriveApp.createFolder(nomDossierDrive(nom)); }
 
 // Remplace GmailApp.sendEmail (mêmes paramètres). En test, tout part vers FRI_EMAIL_TEST.
+// Quota Gmail (compte gratuit : 100 destinataires par jour, cc/cci compris) :
+//   1. tant qu'il reste du quota → Gmail ;
+//   2. quota presque épuisé → les copies destinées au FRI attendent, les familles passent d'abord ;
+//   3. quota épuisé → relais Brevo si la propriété BREVO_API_KEY existe (300 emails/jour gratuits) ;
+//   4. sinon → onglet « File emails », envoyé automatiquement dès que le quota revient (déclencheur horaire).
+var RESERVE_QUOTA_FAMILLES = 15;   // destinataires gardés pour les familles en fin de journée
+
 function envoyerEmail(destinataire, sujet, corps, options) {
-  if (!MODE_TEST) return GmailApp.sendEmail(destinataire, sujet, corps, options);
-  var dest = _props.getProperty('FRI_EMAIL_TEST') || Session.getEffectiveUser().getEmail();
-  var opts = {};
-  Object.keys(options || {}).forEach(function(k) { if (k !== 'cc' && k !== 'bcc') opts[k] = options[k]; });
-  opts.name = '[TEST] ' + (opts.name || NOM_ASSO);
-  Logger.log('MODE TEST — email pour ' + destinataire + ' détourné vers ' + dest);
-  return GmailApp.sendEmail(dest, '[TEST → ' + destinataire + '] ' + sujet, corps, opts);
+  options = options || {};
+  if (MODE_TEST) {
+    var destT = _props.getProperty('FRI_EMAIL_TEST') || Session.getEffectiveUser().getEmail();
+    var optsT = {};
+    Object.keys(options).forEach(function(k) { if (k !== 'cc' && k !== 'bcc') optsT[k] = options[k]; });
+    optsT.name = '[TEST] ' + (optsT.name || NOM_ASSO);
+    Logger.log('MODE TEST — email pour ' + destinataire + ' détourné vers ' + destT);
+    return _envoyerAvecQuota(destT, '[TEST → ' + destinataire + '] ' + sujet, corps, optsT, false);
+  }
+  var pourLeFRI = String(destinataire || '').toLowerCase().indexOf(String(EMAIL_ADMIN).toLowerCase()) >= 0;
+  return _envoyerAvecQuota(destinataire, sujet, corps, options, pourLeFRI);
+}
+
+function _nbDestinataires(dest, options) {
+  return [dest, options.cc, options.bcc].join(',').split(',').filter(function(a) { return a.trim(); }).length;
+}
+
+function _envoyerAvecQuota(dest, sujet, corps, options, pourLeFRI) {
+  var besoin = _nbDestinataires(dest, options);
+  var reste = 0;
+  try { reste = MailApp.getRemainingDailyQuota(); } catch(e) { reste = besoin; }
+  var seuil = pourLeFRI ? besoin + RESERVE_QUOTA_FAMILLES : besoin;
+  if (reste >= seuil) {
+    try { return GmailApp.sendEmail(dest, sujet, corps, options); }
+    catch(e) { Logger.log('Gmail KO (' + e + ') → relais / file d\'attente'); }
+  }
+  if (_envoyerParBrevo(dest, sujet, corps, options)) return true;
+  _mettreEnFileEmail(dest, sujet, corps, options);
+  return false;
+}
+
+// ── Relais Brevo (facultatif) : propriétés BREVO_API_KEY et BREVO_SENDER (adresse validée chez Brevo) ──
+function _envoyerParBrevo(dest, sujet, corps, options) {
+  var cle = _props.getProperty('BREVO_API_KEY');
+  if (!cle) return false;
+  try {
+    var liste = function(v) { return String(v || '').split(',').map(function(a) { return a.trim(); }).filter(String).map(function(a) { return {email: a}; }); };
+    var msg = {
+      sender: {name: options.name || NOM_ASSO, email: _props.getProperty('BREVO_SENDER') || EMAIL_ADMIN},
+      to: liste(dest), subject: sujet
+    };
+    if (options.htmlBody) msg.htmlContent = options.htmlBody; else msg.textContent = corps || ' ';
+    if (options.cc) msg.cc = liste(options.cc);
+    if (options.bcc) msg.bcc = liste(options.bcc);
+    if (options.replyTo) msg.replyTo = {email: options.replyTo};
+    if (options.attachments && options.attachments.length) {
+      msg.attachment = options.attachments.map(function(b) {
+        var blob = b.getBlob ? b.getBlob() : b;
+        return {name: blob.getName() || 'piece-jointe', content: Utilities.base64Encode(blob.getBytes())};
+      });
+    }
+    var rep = UrlFetchApp.fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: {'api-key': cle, accept: 'application/json'}, payload: JSON.stringify(msg)
+    });
+    var ok = rep.getResponseCode() >= 200 && rep.getResponseCode() < 300;
+    Logger.log('Brevo ' + rep.getResponseCode() + ' pour ' + dest + (ok ? '' : ' : ' + rep.getContentText().slice(0, 300)));
+    return ok;
+  } catch(e) { Logger.log('Brevo KO : ' + e); return false; }
+}
+
+// ── File d'attente : onglet « File emails », pièces jointes gardées dans un dossier Drive ──
+var SHEET_FILE_EMAILS = 'File emails';
+function _feuilleFileEmails() {
+  var ss = SpreadsheetApp.openById(SHEET_ID), sh = ss.getSheetByName(SHEET_FILE_EMAILS);
+  if (!sh) {
+    sh = ss.insertSheet(SHEET_FILE_EMAILS);
+    sh.getRange(1, 1, 1, 6).setValues([['Ajouté le', 'Destinataire', 'Sujet', 'Statut', 'Envoyé le', 'Données']])
+      .setFontWeight('bold').setBackground('#1a2e22').setFontColor('#ffffff');
+    sh.setFrozenRows(1);
+    sh.hideColumns(6);
+  }
+  return sh;
+}
+
+function _mettreEnFileEmail(dest, sujet, corps, options) {
+  try {
+    var opts = {};
+    Object.keys(options).forEach(function(k) { if (k !== 'attachments' && k !== 'inlineImages') opts[k] = options[k]; });
+    var pj = [];
+    if (options.attachments && options.attachments.length) {
+      var dossier = creerDossierSecurise('File emails - pièces jointes');
+      options.attachments.forEach(function(b) {
+        var f = dossier.createFile(b.getBlob ? b.getBlob() : b);
+        pj.push(f.getId());
+      });
+    }
+    var donnees = JSON.stringify({dest: dest, sujet: sujet, corps: corps || '', options: opts, pj: pj});
+    _feuilleFileEmails().appendRow([Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm'), dest, sujet, '⏳ En attente', '', donnees]);
+    _installerDeclencheurFileEmails();
+    Logger.log('Quota email atteint — mis en file : ' + dest + ' / ' + sujet);
+  } catch(e) { Logger.log('Mise en file email KO : ' + e); }
+}
+
+function _installerDeclencheurFileEmails() {
+  try {
+    var existe = ScriptApp.getProjectTriggers().some(function(t) { return t.getHandlerFunction() === 'envoyerFileEmails'; });
+    if (!existe) ScriptApp.newTrigger('envoyerFileEmails').timeBased().everyHours(1).create();
+  } catch(e) { Logger.log('Déclencheur file emails KO : ' + e); }
+}
+
+// Déclencheur horaire (ou à lancer à la main) : envoie la file tant qu'il reste du quota
+function envoyerFileEmails() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    var sh = _feuilleFileEmails();
+    if (sh.getLastRow() < 2) return;
+    var data = sh.getRange(2, 1, sh.getLastRow() - 1, 6).getValues();
+    var envoyes = 0, restants = 0;
+    for (var i = 0; i < data.length; i++) {
+      if (String(data[i][3]).indexOf('En attente') < 0) continue;
+      var m; try { m = JSON.parse(data[i][5]); } catch(e) { sh.getRange(i + 2, 4).setValue('❌ Illisible'); continue; }
+      var opts = m.options || {};
+      if (m.pj && m.pj.length) opts.attachments = m.pj.map(function(id) { return DriveApp.getFileById(id).getBlob(); });
+      var besoin = _nbDestinataires(m.dest, opts), reste = 0;
+      try { reste = MailApp.getRemainingDailyQuota(); } catch(e) {}
+      var ok = false;
+      if (reste >= besoin) { try { GmailApp.sendEmail(m.dest, m.sujet, m.corps, opts); ok = true; } catch(e) { Logger.log('File Gmail KO : ' + e); } }
+      if (!ok) ok = _envoyerParBrevo(m.dest, m.sujet, m.corps, opts);
+      if (!ok) { restants++; continue; }
+      sh.getRange(i + 2, 4, 1, 2).setValues([['✅ Envoyé', Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy HH:mm')]]);
+      (m.pj || []).forEach(function(id) { try { DriveApp.getFileById(id).setTrashed(true); } catch(e) {} });
+      envoyes++;
+    }
+    Logger.log('File emails : ' + envoyes + ' envoyé(s), ' + restants + ' en attente');
+    // File vide : le déclencheur horaire n'est plus utile
+    if (!restants) ScriptApp.getProjectTriggers().forEach(function(t) { if (t.getHandlerFunction() === 'envoyerFileEmails') ScriptApp.deleteTrigger(t); });
+  } finally { lock.releaseLock(); }
+}
+
+// À lancer depuis l'éditeur : quota restant aujourd'hui et taille de la file
+function etatQuotaEmails() {
+  var sh = _feuilleFileEmails();
+  var enFile = sh.getLastRow() < 2 ? 0 : sh.getRange(2, 4, sh.getLastRow() - 1, 1).getValues()
+    .filter(function(r) { return String(r[0]).indexOf('En attente') >= 0; }).length;
+  Logger.log('Quota Gmail restant aujourd\'hui : ' + MailApp.getRemainingDailyQuota() + ' destinataire(s) ; emails en file : ' + enFile
+    + ' ; relais Brevo : ' + (_props.getProperty('BREVO_API_KEY') ? 'configuré' : 'non configuré'));
 }
 
 var SHEET_INSCRIPTIONS  = 'Inscriptions';

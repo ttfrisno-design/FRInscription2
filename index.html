@@ -4288,7 +4288,7 @@ async function chargerDossierExistant() {
   }
 
   // Construire la liste des activités existantes
-  const NON_DISCOUNTABLE = ['marche-nordic','country-init-j'];
+  const NON_DISCOUNTABLE = ['marche-nordic'];   // Country : seul le forfait (≥ 2 cours) est exclu
   activitesExistantes = [];
   let totalExistant = 0;
   let countEligibles = 0;
@@ -4449,7 +4449,7 @@ function calcTotals() {
   // Adhésion FNSMR : 15 € par membre, sauf adhésion déjà réglée (dossier existant de la saison)
   let totalFNSMR = state.members.filter(m => !membreDejaAdherent(m)).length * 15;
 
-  const NON_DISCOUNTABLE = ['marche-nordic','country-init-j'];
+  const NON_DISCOUNTABLE = ['marche-nordic'];   // Country : seul le forfait (≥ 2 cours) est exclu
   const allMemberActivities = state.members.flatMap(m => m.activities);
   totalActivities = new Set(allMemberActivities).size;
 
@@ -4556,7 +4556,7 @@ function buildRows(reg) {
 
         // Appliquer remise 15% si éligible — tarif = montant réellement réglé
         const aRemise15 = reg.totals && reg.totals.familyActCount >= 3;
-        const NON_REMISABLE = ['marche-nordic','country-init-a','country-init-j'];
+        const NON_REMISABLE = ['marche-nordic'];
         const isCountryForfaitLinked = cFl.forfait && ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'].includes(actId);
         const estElig = !_isWaiting && aRemise15 && !isCountryForfaitLinked && !NON_REMISABLE.includes(actId) && (!actId.startsWith('tt-') || isno) && (!actId.startsWith('ping') || isno);
         price = prorata(price, reg.date);
@@ -4638,7 +4638,7 @@ function buildRows(reg) {
       const CFIDSl2 = ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j','country-init-j'];
       if (cFl2.forfait && CFIDSl2.includes(actId)) price = (cFl2.ids[0] === actId) ? cFl2.prix : 0;
       const aRemise15b = reg.totals && reg.totals.familyActCount >= 3;
-      const NON_REMISABLE2 = ['marche-nordic','country-init-a','country-init-j'];
+      const NON_REMISABLE2 = ['marche-nordic'];
       const isCountryForfait2 = cFl2.forfait && ['country-init-a','country-init-a','country-debu-a','country-novice','country-inter','country-debu-j','country-init-j'].includes(actId);
       const estElig2 = !_isWaiting2 && aRemise15b && !isCountryForfait2 && !NON_REMISABLE2.includes(actId) && (!actId.startsWith('tt-') || isno) && (!actId.startsWith('ping') || isno);
       price = prorata(price, reg.date);
@@ -9577,7 +9577,7 @@ async function afficherBilanDossier(code, docId, recalculer) {
       : l.regle ? '<span style="color:#52b788;">✅ réglée</span>' : '<span style="color:#ffab40;font-weight:700;">⏳ à régler</span>';
     const prix = l.attente ? '—' : (l.net !== l.brut ? '<s style="opacity:.5">' + e2(l.brut) + '</s> ' + e2(l.net) : e2(l.net));
     h += ligne(escHtml(l.membre) + ' — ' + escHtml(l.activite) + '<br><span style="font-size:10px;">' + badge
-      + (l.attente ? '' : (l.eligible ? ' · éligible remise' : ' · non remisable')) + '</span>', prix, 'border-bottom:1px solid rgba(255,255,255,0.06);');
+      + (l.attente ? '' : (l.eligible ? ' · éligible remise' : l.forfait ? ' · forfait Country (non remisable)' : ' · non remisable')) + '</span>', prix, 'border-bottom:1px solid rgba(255,255,255,0.06);');
   });
   h += ligne('Adhésions (' + b.nbMembres + ' × 15 €)', e2(b.adhesions));
   h += ligne('Remise famille 15 % ' + (b.remise ? '(' + b.nbEligibles + ' activités éligibles)' : '— non applicable (' + b.nbEligibles + ' activité' + (b.nbEligibles > 1 ? 's' : '') + ' éligible' + (b.nbEligibles > 1 ? 's' : '') + ', 3 requises)'),

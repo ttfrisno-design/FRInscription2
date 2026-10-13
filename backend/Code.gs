@@ -3160,14 +3160,23 @@ function formuleAF(row) {
 // ── Éligibilité remise 15% — TT éligible pour Isneauville ──
 function estEligibleRemise(pid, commune) {
   if (!pid) return false;
-  // Non remisables : Marche nordique et Country (forfaits). La danse moderne est remisable.
-  var NR = ['MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
+  // Non remisable : Marche nordique (forfait). Le Country n'est exclu qu'en forfait, c'est-à-dire quand
+  // un même membre prend au moins 2 cours de Country (voir _estForfaitCountry). La danse moderne est remisable.
+  var NR = ['MNOME/S10'];
   if (NR.indexOf(pid) >= 0) return false;
   // TT (PING*) : éligible uniquement pour les habitants d\'Isneauville
   if (pid.indexOf('PING') >= 0) {
     return (commune === 'Isneauville' || commune === 'isno');
   }
   return true;
+}
+
+// Forfait Country : un membre inscrit à au moins 2 cours de Country (COUNV…) → ces cours ne sont pas remisables
+function _estCoursCountry(pid) { return String(pid || '').indexOf('COUNV') === 0; }
+function _nbCoursCountryParMembre(lignes) {
+  var n = {};
+  lignes.forEach(function(l) { if (_estCoursCountry(l.pid)) n[l.mem] = (n[l.mem] || 0) + 1; });
+  return n;
 }
 
 function communeFromVille(ville) {
@@ -3478,10 +3487,16 @@ function bilanFinancierDossier(code) {
     var pid = lireActiviteId(r), attente = st.indexOf('attente') >= 0;
     var l = {membre: (String(r[3] || '') + ' ' + String(r[2] || '')).trim(), activite: String(r[22] || '').replace(/\n/g, ' — '),
              pid: pid, brut: Number(r[27]) || 0, eligible: estEligibleRemise(pid, commune), attente: attente,
+             mem: (String(r[3] || '') + ' ' + String(r[2] || '')).trim().toUpperCase(),
              regle: !attente && _estStatutRegle(r[21]), statutPaiement: String(r[21] || '')};
     totalSheet = Math.max(totalSheet, Number(r[31]) || 0);
-    if (!attente) { membres[l.membre] = true; if (l.eligible) nbElig++; }
     lignes.push(l);
+  });
+  // Forfait Country (≥ 2 cours pour un même membre) : non remisable
+  var countryParMembre = _nbCoursCountryParMembre(lignes.filter(function(l) { return !l.attente; }));
+  lignes.forEach(function(l) {
+    if (_estCoursCountry(l.pid) && (countryParMembre[l.mem] || 0) >= 2) { l.eligible = false; l.forfait = true; }
+    if (!l.attente) { membres[l.membre] = true; if (l.eligible) nbElig++; }
   });
   var remise = nbElig >= 3, totalActivites = 0, totalRemise = 0;
   lignes.forEach(function(l) {
@@ -4124,7 +4139,8 @@ function addRegistration(rows, paymentStatus, payload) {
   Logger.log("addReg step3: avant calcTotalFamille");
   try { calcTotalFamille(ss, rows[0].code_dossier || ''); } catch(etf) { Logger.log('calcTotalFamille KO: '+etf); }
   // Ajout à un dossier existant : remise 15 % et total recalculés sur l'ensemble du dossier
-  if (ajoutDossier) { try { recalculerRemiseDossier(ss, rows[0].code_dossier || ''); } catch(eRR) { Logger.log('Recalcul dossier (ajout) KO: ' + eRR); } }
+  // (et pour toute inscription : éligibilité ligne par ligne, forfait Country compris)
+  try { recalculerRemiseDossier(ss, rows[0].code_dossier || ''); } catch(eRR) { Logger.log('Recalcul dossier KO: ' + eRR); }
   var statutMap={};
   try{statutMap=incrementPlaces(ss,rows);}catch(e){Logger.log('Places KO: '+e);}
 
@@ -5648,7 +5664,9 @@ function recalculerRemiseDossier(ss, code) {
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
   var communeRec = communeFromVille((data||[]).length > 0 ? ((data||[]).find(function(r){ return String(r[19]||'').trim()===code; })||{})[10] : '');
   function eligibleRemise(pid) { return estEligibleRemise(pid, communeRec); }
-  var lignesActives = [], seenPids = {}, nbEligibles = 0;
+  var lignesActives = [], seenPids = {}, nbEligibles = 0, countryParMembre = {};
+  // Éligibilité d'une ligne : règle de l'activité, et Country exclu s'il fait partie d'un forfait
+  function eligibleLigne(l) { return eligibleRemise(l.pid) && !(_estCoursCountry(l.pid) && (countryParMembre[l.mem] || 0) >= 2); }
   for (var i = 0; i < data.length; i++) {
     if (String(data[i][19] || '').trim() !== code) continue;
     var statut38 = String(data[i][39] || '').toLowerCase();
@@ -5657,9 +5675,12 @@ function recalculerRemiseDossier(ss, code) {
     if (statut38.indexOf('attente') >= 0) continue;
     var pid = lireActiviteId(data[i]);
     var tarifActuel = Number(data[i][27] || 0);
-    lignesActives.push({ idx: i, pid: pid, tarifActuel: tarifActuel });
-    if (eligibleRemise(pid) && !seenPids[pid]) { seenPids[pid] = true; nbEligibles++; }
+    lignesActives.push({ idx: i, pid: pid, tarifActuel: tarifActuel, mem: (String(data[i][3] || '') + ' ' + String(data[i][2] || '')).trim().toUpperCase() });
   }
+  countryParMembre = _nbCoursCountryParMembre(lignesActives);
+  lignesActives.forEach(function(l) {
+    if (eligibleLigne(l) && !seenPids[l.pid]) { seenPids[l.pid] = true; nbEligibles++; }
+  });
   var aRemise = nbEligibles >= 3;
   Logger.log('recalculerRemiseDossier — '+lignesActives.length+' lignes actives, '+nbEligibles+' éligibles, remise: '+aRemise);
   if (lignesActives.length === 0) return;
@@ -5684,7 +5705,7 @@ function recalculerRemiseDossier(ss, code) {
         brut = l.tarifActuel;
       }
       // Éligible : col 29 (Oui/Non) — fallback sur estEligible(pid)
-      var elig = eligVal === 1 || (eligVal !== 1 && eligVal !== 0 && eligibleRemise(l.pid));
+      var elig = eligVal === 1 || (eligVal !== 1 && eligVal !== 0 && eligibleLigne(l));
       if (eligVal !== 1 && eligVal !== 0) {
         sheet.getRange(l.idx + 2, 29).setValue(elig ? 1 : 0);
       }
@@ -5698,13 +5719,13 @@ function recalculerRemiseDossier(ss, code) {
   // col 32 AF = formule SUMIF → Sheets calcule le total famille automatiquement
   lignesActives.forEach(function(l) {
     var brut    = tarifsBruts[l.idx];
-    var estElig = eligibles[l.idx] !== undefined ? eligibles[l.idx] : eligibleRemise(l.pid);
+    var estElig = eligibles[l.idx] !== undefined ? eligibles[l.idx] : eligibleLigne(l);
     var rn      = l.idx + 2;
     // col 28 AB : tarif brut (valeur fixe, ne change jamais)
     sheet.getRange(rn, 28).setValue(brut);
     // col 29 AC : éligible — toujours recalculé selon la règle (activité + commune), y compris
     // pour les lignes plus anciennes du dossier : un ajout d'activités peut déclencher la remise
-    estElig = eligibleRemise(l.pid);
+    estElig = eligibleLigne(l);
     var acVal = data[l.idx][28]; if (acVal !== (estElig ? 1 : 0)) {
       sheet.getRange(rn, 29).setValue(estElig ? 1 : 0)
         .setBackground(estElig ? '#e8f5e9' : '#fce4ec')

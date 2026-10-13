@@ -3160,9 +3160,8 @@ function formuleAF(row) {
 // ── Éligibilité remise 15% — TT éligible pour Isneauville ──
 function estEligibleRemise(pid, commune) {
   if (!pid) return false;
-  var NR = [
-    'JAZME1015','JAZME1115','JAZME1315','JAZME1415','JAZME1515','JAZME1615','JAZME1715','JAZJ1745',
-    'MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
+  // Non remisables : Marche nordique et Country (forfaits). La danse moderne est remisable.
+  var NR = ['MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
   if (NR.indexOf(pid) >= 0) return false;
   // TT (PING*) : éligible uniquement pour les habitants d\'Isneauville
   if (pid.indexOf('PING') >= 0) {
@@ -3516,6 +3515,23 @@ function bilanFinancierDossier(code) {
           nbMembres: nbMembres, adhesions: adhesions, totalDu: totalDu, totalSheet: totalSheet,
           encaissements: encaissements, recu: recu, attente: attenteEnc, reste: reste, nonCouvert: nonCouvert,
           nbLignesNonReglees: lignesNonReglees.length, etat: etat};
+}
+
+// À lancer depuis l'éditeur après un changement de règle de remise : recalcule l'éligibilité,
+// la remise 15 % et le total de tous les dossiers de la feuille Inscriptions
+function recalculerTousLesDossiers() {
+  var ss = SpreadsheetApp.openById(SHEET_ID), sh = ss.getSheetByName(SHEET_INSCRIPTIONS);
+  if (!sh || sh.getLastRow() < 2) return;
+  var codes = {};
+  sh.getRange(2, 20, sh.getLastRow() - 1, 1).getValues().forEach(function(r) {
+    var c = String(r[0] || '').trim(); if (/^FRI-[A-Z0-9]{4}$/.test(c)) codes[c] = true;
+  });
+  var liste = Object.keys(codes), n = 0, debut = Date.now();
+  for (var i = 0; i < liste.length; i++) {
+    if (Date.now() - debut > 300000) { Logger.log('⏱ Arrêt après ' + n + ' dossiers (limite de temps) : relancez pour continuer.'); break; }
+    try { recalculerRemiseDossier(ss, liste[i]); n++; } catch(e) { Logger.log(liste[i] + ' KO : ' + e); }
+  }
+  Logger.log('✅ ' + n + ' / ' + liste.length + ' dossier(s) recalculé(s)');
 }
 
 // ── Montant total des remises famille 15 % accordées (console admin, ou à lancer depuis l'éditeur) ──
@@ -3982,8 +3998,8 @@ function addRegistration(rows, paymentStatus, payload) {
   }
 
   var NON_REMISABLE_IDS = ['PINGL1945/ME1945','PINGM1930/ME21','PINGJ1530',
-    'PINGL18/J17','PINGME1730','PINGL1745ME1830','JAZME1015','JAZME1115','JAZME1315','JAZME1415','JAZME1515',
-    'JAZME1615','JAZME1715','JAZJ1745','MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
+    'PINGL18/J17','PINGME1730','PINGL1745ME1830',
+   'MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
   var commune0 = rows[0].commune || '';
   function estEligRemise(pid) {
     return estEligibleRemise(pid, commune0);
@@ -5627,8 +5643,8 @@ function recalculerRemiseDossier(ss, code) {
   var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
   if (!sheet || sheet.getLastRow() < 2) return;
   var NON_REMISABLE = ['PINGL1945/ME1945','PINGM1930/ME21','PINGJ1530',
-    'PINGL18/J17','PINGME1730','PINGL1745ME1830','JAZME1015','JAZME1115','JAZME1315','JAZME1415','JAZME1515',
-    'JAZME1615','JAZME1715','JAZJ1745','MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
+    'PINGL18/J17','PINGME1730','PINGL1745ME1830',
+   'MNOME/S10','COUNV1830','COUNV1930','COUNV2030','COUNV2130'];
   var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 41).getValues();
   var communeRec = communeFromVille((data||[]).length > 0 ? ((data||[]).find(function(r){ return String(r[19]||'').trim()===code; })||{})[10] : '');
   function eligibleRemise(pid) { return estEligibleRemise(pid, communeRec); }

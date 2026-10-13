@@ -154,16 +154,55 @@ function _envoyerParMailjet(dest, sujet, corps, options) {
                 Base64Content: Utilities.base64Encode(blob.getBytes())};
       });
     }
-    var auth = Utilities.base64Encode(_props.getProperty('MAILJET_API_KEY') + ':' + _props.getProperty('MAILJET_SECRET_KEY'));
-    var rep = UrlFetchApp.fetch('https://api.mailjet.com/v3.1/send', {
-      method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      headers: {Authorization: 'Basic ' + auth}, payload: JSON.stringify({Messages: [msg]})
-    });
-    var code = rep.getResponseCode(), ok = false;
-    try { ok = code === 200 && JSON.parse(rep.getContentText()).Messages[0].Status === 'success'; } catch(e) {}
-    Logger.log('Mailjet ' + code + ' pour ' + dest + (ok ? '' : ' : ' + rep.getContentText().slice(0, 300)));
-    return ok;
+    var auth = 'Basic ' + Utilities.base64Encode(_props.getProperty('MAILJET_API_KEY') + ':' + _props.getProperty('MAILJET_SECRET_KEY'));
+    // Message au format de l'ancienne API v3 (même compte, même clés) : utilisé si la v3.1 est injoignable
+    var adresses = function(v) { return String(v || '').split(',').map(function(a) { return a.trim(); }).filter(String).join(', '); };
+    var msgV3 = {FromEmail: msg.From.Email, FromName: msg.From.Name, Subject: sujet, 'Text-part': msg.TextPart,
+                 To: adresses(dest), Headers: {'Reply-To': msg.ReplyTo.Email}};
+    if (msg.HTMLPart) msgV3['Html-part'] = msg.HTMLPart;
+    if (options.cc) msgV3.Cc = adresses(options.cc);
+    if (options.bcc) msgV3.Bcc = adresses(options.bcc);
+    if (msg.Attachments) msgV3.Attachments = msg.Attachments.map(function(a) { return {'Content-type': a.ContentType, Filename: a.Filename, content: a.Base64Content}; });
+    var essais = [
+      {url: 'https://api.mailjet.com/v3.1/send', corps: {Messages: [msg]}, v31: true},
+      {url: 'https://api.mailjet.com/v3.1/send', corps: {Messages: [msg]}, v31: true, pause: 2000},
+      {url: 'https://api.mailjet.com/v3/send', corps: msgV3, v31: false, pause: 1000}
+    ];
+    for (var i = 0; i < essais.length; i++) {
+      var es = essais[i];
+      if (es.pause) Utilities.sleep(es.pause);
+      try {
+        var rep = UrlFetchApp.fetch(es.url, {method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+          headers: {Authorization: auth}, payload: JSON.stringify(es.corps)});
+        var code = rep.getResponseCode(), texte = rep.getContentText(), ok = false;
+        try { ok = code === 200 && (es.v31 ? JSON.parse(texte).Messages[0].Status === 'success' : true); } catch(e) {}
+        Logger.log('Mailjet ' + es.url.replace('https://api.mailjet.com', '') + ' → ' + code + ' pour ' + dest + (ok ? '' : ' : ' + texte.slice(0, 300)));
+        if (ok) return true;
+        if (code === 401 || code === 403) return false;   // clés ou expéditeur refusés : inutile d'insister
+      } catch(eF) {
+        Logger.log('Mailjet ' + es.url.replace('https://api.mailjet.com', '') + ' injoignable : ' + eF);
+      }
+    }
+    return false;
   } catch(e) { Logger.log('Mailjet KO : ' + e); return false; }
+}
+
+// Diagnostic : Google joint-il Mailjet ? (à lancer depuis l'éditeur)
+function diagnostiquerMailjet() {
+  var cles = _mailjetConfigure();
+  Logger.log('Clés Mailjet présentes : ' + cles + ' ; expéditeur : ' + (_props.getProperty('MAILJET_SENDER') || '(non défini → ' + EMAIL_ADMIN + ')'));
+  ['https://api.mailjet.com/v3/REST/sender', 'https://api.mailjet.com/v3.1/send', 'https://www.mailjet.com/', 'https://api.helloasso.com/v5'].forEach(function(u) {
+    try {
+      var opt = {muteHttpExceptions: true, followRedirects: false};
+      if (cles && u.indexOf('/REST/') >= 0) opt.headers = {Authorization: 'Basic ' + Utilities.base64Encode(_props.getProperty('MAILJET_API_KEY') + ':' + _props.getProperty('MAILJET_SECRET_KEY'))};
+      var r = UrlFetchApp.fetch(u, opt);
+      var info = '';
+      if (u.indexOf('/REST/sender') >= 0 && r.getResponseCode() === 200) {
+        try { info = ' — expéditeurs : ' + JSON.parse(r.getContentText()).Data.map(function(x) { return x.Email + ' (' + x.Status + ')'; }).join(', '); } catch(e) {}
+      }
+      Logger.log('✅ ' + u + ' → HTTP ' + r.getResponseCode() + info);
+    } catch(e) { Logger.log('❌ ' + u + ' → ' + e); }
+  });
 }
 
 // À lancer depuis l'éditeur : envoie un email d'essai par Mailjet à l'adresse indiquée

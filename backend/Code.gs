@@ -109,7 +109,16 @@ function _contientAdresseFree(dest, options) {
   });
 }
 
+// Adresse de réponse des familles : contact@fri-isneauville.fr (redirigée vers la boîte du FRI).
+// Propriété EMAIL_REPONSE pour en changer. Les messages transmis au FRI gardent la famille en réponse.
+var EMAIL_REPONSE_DEFAUT = 'contact@fri-isneauville.fr';
+function _adresseReponse() { return _props.getProperty('EMAIL_REPONSE') || EMAIL_REPONSE_DEFAUT; }
+
 function _envoyerAvecQuota(dest, sujet, corps, options, pourLeFRI) {
+  // Réponse d'un adhérent → contact@fri-isneauville.fr (et non la boîte technique des inscriptions)
+  if (!options.replyTo || String(options.replyTo).toLowerCase() === String(EMAIL_ADMIN).toLowerCase()) {
+    options = Object.assign({}, options, {replyTo: _adresseReponse()});
+  }
   // Mailjet d'abord (toutes les adresses, ou seulement celles de Free selon MAILJET_USAGE)
   if (_mailjetConfigure() && (_props.getProperty('MAILJET_USAGE') !== 'free' || _contientAdresseFree(dest, options))) {
     if (_envoyerParMailjet(dest, sujet, corps, options)) return true;
@@ -144,8 +153,18 @@ function _envoyerParMailjet(dest, sujet, corps, options) {
       To: liste(dest),
       Subject: sujet,
       TextPart: corps || (options.htmlBody ? String(options.htmlBody).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ' '),
-      ReplyTo: {Email: options.replyTo || EMAIL_ADMIN}
+      ReplyTo: {Email: options.replyTo || _adresseReponse()}
     };
+    // Images intégrées (logo cid:…) : transmises à Mailjet comme pièces « inline »
+    if (options.inlineImages) {
+      var inl = Object.keys(options.inlineImages).map(function(cid) {
+        var b = options.inlineImages[cid]; if (!b) return null;
+        var blob = b.getBlob ? b.getBlob() : b;
+        return {ContentType: blob.getContentType() || 'image/png', Filename: blob.getName() || (cid + '.png'),
+                ContentID: cid, Base64Content: Utilities.base64Encode(blob.getBytes())};
+      }).filter(Boolean);
+      if (inl.length) msg.InlinedAttachments = inl;
+    }
     if (options.htmlBody) msg.HTMLPart = options.htmlBody;
     if (options.cc) msg.Cc = liste(options.cc);
     if (options.bcc) msg.Bcc = liste(options.bcc);

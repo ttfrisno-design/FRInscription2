@@ -177,7 +177,13 @@ function _envoyerParMailjet(dest, sujet, corps, options) {
         var rep = UrlFetchApp.fetch(es.url, {method: 'post', contentType: 'application/json', muteHttpExceptions: true,
           headers: {Authorization: auth}, payload: JSON.stringify(es.corps)});
         var code = rep.getResponseCode(), texte = rep.getContentText(), ok = false;
-        try { ok = code === 200 && (es.v31 ? JSON.parse(texte).Messages[0].Status === 'success' : true); } catch(e) {}
+        try {
+          var rj = JSON.parse(texte);
+          ok = code === 200 && (es.v31 ? rj.Messages[0].Status === 'success' : true);
+          // Identifiant Mailjet du dernier message : suiviDernierEmailMailjet() en donne le sort (remis, bloqué, rejeté…)
+          var mid = es.v31 ? (rj.Messages[0].To && rj.Messages[0].To[0] && rj.Messages[0].To[0].MessageID) : (rj.Sent && rj.Sent[0] && rj.Sent[0].MessageID);
+          if (ok && mid) _props.setProperty('MAILJET_DERNIER_ID', String(mid) + '|' + dest);
+        } catch(e) {}
         Logger.log('Mailjet ' + es.url.replace('https://api.mailjet.com', '') + ' → ' + code + ' pour ' + dest + (ok ? '' : ' : ' + texte.slice(0, 300)));
         if (ok) return true;
         if (code === 401 || code === 403) return false;   // clés ou expéditeur refusés : inutile d'insister
@@ -187,6 +193,24 @@ function _envoyerParMailjet(dest, sujet, corps, options) {
     }
     return false;
   } catch(e) { Logger.log('Mailjet KO : ' + e); return false; }
+}
+
+// À lancer depuis l'éditeur, une minute après testerMailjet : ce que Mailjet a fait du dernier email
+function suiviDernierEmailMailjet() {
+  var d = String(_props.getProperty('MAILJET_DERNIER_ID') || '').split('|');
+  if (!d[0]) { Logger.log('Aucun email Mailjet enregistré : lancez d\'abord testerMailjet.'); return; }
+  var auth = {Authorization: 'Basic ' + Utilities.base64Encode(_props.getProperty('MAILJET_API_KEY') + ':' + _props.getProperty('MAILJET_SECRET_KEY'))};
+  var lire = function(u) {
+    var r = UrlFetchApp.fetch('https://api.mailjet.com/v3/REST/' + u, {headers: auth, muteHttpExceptions: true});
+    try { return JSON.parse(r.getContentText()).Data || []; } catch(e) { Logger.log(u + ' → HTTP ' + r.getResponseCode() + ' ' + r.getContentText().slice(0, 200)); return []; }
+  };
+  var m = lire('message/' + d[0])[0];
+  Logger.log('Message ' + d[0] + ' pour ' + (d[1] || '?') + ' : statut Mailjet = ' + (m ? m.Status : 'inconnu (patientez une minute et relancez)'));
+  lire('messagehistory/' + d[0]).forEach(function(h) {
+    Logger.log('  ' + new Date(h.EventAt * 1000).toLocaleString('fr-FR') + ' — ' + h.EventType + (h.Comment ? ' — ' + h.Comment : '') + (h.State ? ' (' + h.State + ')' : ''));
+  });
+  Logger.log('Statuts : sent = remis au serveur du destinataire ; queued / deferred = en attente ; blocked = retenu par Mailjet '
+    + '(expéditeur ou domaine non validé, compte à vérifier) ; bounce / hardbounce = refusé par le destinataire ; spam = classé indésirable.');
 }
 
 // Diagnostic : Google joint-il Mailjet ? (à lancer depuis l'éditeur)

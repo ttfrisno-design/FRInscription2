@@ -529,7 +529,7 @@ function genererFacturePDF(rows, modeLabel, titreOverride) {
     var adresseAsso=body.appendParagraph('Salle des fêtes — Place A. Cramilly — 76230 Isneauville');
     adresseAsso.editAsText().setFontSize(9).setForegroundColor('#888888');
     adresseAsso.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    var contactAsso=body.appendParagraph('frisneauville@orange.fr  |  02.35.59.01.01  |  www.frisneauville.fr');
+    var contactAsso=body.appendParagraph('frisneauville@orange.fr  |  06.80.78.95.77  |  www.frisneauville.fr');
     contactAsso.editAsText().setFontSize(9).setForegroundColor('#888888');
     contactAsso.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
     body.appendHorizontalRule();
@@ -935,7 +935,7 @@ function pagePaiementEmail(jeton) {
       + '<div style="font-size:40px">🏡</div><h2 style="color:#1a2e22">' + NOM_ASSO + '</h2>' + contenu + '</div></body></html>')
       .setTitle('Règlement — ' + NOM_ASSO);
   };
-  if (!info) return page('<p>Ce lien de paiement n\'est plus valable.</p><p style="color:#666;font-size:14px">Contactez-nous : frisneauville@orange.fr — 02.35.59.01.01</p>');
+  if (!info) return page('<p>Ce lien de paiement n\'est plus valable.</p><p style="color:#666;font-size:14px">Contactez-nous : frisneauville@orange.fr — 06.80.78.95.77</p>');
   var montantCts = Math.round(Number(info.montant) * 100);
   var lienHA = helloassoCreerLienPaiement(montantCts, info.prenom, info.nom, info.email, info.code,
     (info.description || 'Règlement') + ' — ' + info.code);
@@ -2187,7 +2187,7 @@ function traiterRequete(e) {
             + "</table>"
             + situationHtml + qsHtml
             + blocCommentaireAdminHtml(commentaireAdminMod)
-            + "<p style='color:#888;font-size:12px'>Foyer Rural d’Isneauville — frisneauville@orange.fr — 02.35.59.01.01</p>"
+            + "<p style='color:#888;font-size:12px'>Foyer Rural d’Isneauville — frisneauville@orange.fr — 06.80.78.95.77</p>"
             + "</div>";
           var sujet = '[FRI] Modification activité — '+emailRow.code+' — '+emailRow.memPrenom+' '+emailRow.memNom+' — '+sujetSuffixe;
           envoyerEmail(emailRow.email, sujet, '', {htmlBody:corps, name:'FRI Inscriptions'});
@@ -2740,7 +2740,7 @@ function traiterRequete(e) {
           + '<p style="color:#555;font-size:13px;margin-top:16px;">Votre inscription ne sera définitivement validée qu&#39;à réception de l&#39;ensemble des pièces et du règlement.</p>'
           + '</div>'
           + '<div style="background:#f5f5f5;padding:12px 24px;border-radius:0 0 8px 8px;font-size:11px;color:#888;text-align:center;">'
-          + NOM_ASSO+' - Tel : 02.35.59.01.01 - frisneauville@orange.fr'
+          + NOM_ASSO+' - Tel : 06.80.78.95.77 - frisneauville@orange.fr'
           + '</div></div></body></html>';
 
         var sujet = '[FRI] Dossier '+code+' - Piece(s) manquante(s)';
@@ -2787,7 +2787,7 @@ function traiterRequete(e) {
           + '<li>Par email : <a href="mailto:frisneauville@orange.fr">frisneauville@orange.fr</a></li>'
           + '</ul></div>'
           + '<div style="background:#f5f5f5;padding:12px 24px;border-radius:0 0 8px 8px;font-size:11px;color:#888;text-align:center;">'
-          + NOM_ASSO+' - Tel : 02.35.59.01.01 - frisneauville@orange.fr'
+          + NOM_ASSO+' - Tel : 06.80.78.95.77 - frisneauville@orange.fr'
           + '</div></div></body></html>';
         var sujet2 = '[FRI] Dossier '+code2+' - Piece(s) manquante(s)';
         var txtBody2 = 'Bonjour '+nom2+',\n\nVotre dossier '+code2+' est enregistr\u00e9 mais il manque :\n'+listTxt2
@@ -5001,7 +5001,7 @@ function appliquerModificationDossier(params) {
       + regleHtml
       + blocCommentaireAdminHtml(commentaireAdmin)
       + '<hr style="border:none;border-top:1px solid #e0e0e0;margin:16px 0">'
-      + '<small style="color:#888">Contact : frisneauville@orange.fr | 02.35.59.01.01</small></div></div>';
+      + '<small style="color:#888">Contact : frisneauville@orange.fr | 06.80.78.95.77</small></div></div>';
 
     // Corps texte
     var lignesTexte = lignes.map(function(r) {
@@ -5029,7 +5029,7 @@ function appliquerModificationDossier(params) {
       + (aRemise ? '\n\nRemise famille 15% appliquée (≥ 3 activités éligibles).' : '')
       + regleTexte
       + (commentaireAdmin ? '\n\nNote de l\'équipe FRI : ' + commentaireAdmin : '')
-      + '\n\nContact : frisneauville@orange.fr | 02.35.59.01.01\nCordialement,\nLe Foyer Rural d\'Isneauville';
+      + '\n\nContact : frisneauville@orange.fr | 06.80.78.95.77\nCordialement,\nLe Foyer Rural d\'Isneauville';
 
     // Traçabilité : n'écrit dans "Commentaires admin" que si un commentaire a
     // été saisi ou si le montant a été modifié manuellement par l'admin.
@@ -5277,7 +5277,7 @@ function _ajouterActiviteDossier(payload) {
           + '  Horaire  : ' + jour + ' ' + heure + '\n'
           + '  Lieu     : ' + lieu + '\n\n'
           + 'Nous vous contacterons dès qu\'une place se libère.\n\n'
-          + 'Foyer Rural d\'Isneauville\nfrisneauville@orange.fr | 02.35.59.01.01';
+          + 'Foyer Rural d\'Isneauville\nfrisneauville@orange.fr | 06.80.78.95.77';
         envoyerEmail(emailAdherent, subjLA, bodyLA, {
           name: NOM_ASSO, replyTo: EMAIL_ADMIN
         });
@@ -6116,7 +6116,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
     + '<div style="background:#e8f4fd;border-left:4px solid #2980b9;border-radius:6px;padding:11px;margin-top:14px;font-size:13px;line-height:1.7">'
     + '<strong>Permanences</strong> : tous les <strong>mardis de 16h30 à 18h30</strong> <em>(période scolaire)</em><br>'
     + 'Salle des fêtes — Place A. Cramilly, 76230 Isneauville</div>'
-    + '<p style="margin-top:12px;font-size:12px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0235590101" style="color:#2d6a4f">02.35.59.01.01</a></p>'
+    + '<p style="margin-top:12px;font-size:12px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0680789577" style="color:#2d6a4f">06.80.78.95.77</a></p>'
     + '</div>'
     + (function() {
         var hasTT = rows.some(function(r){ var aid = String(r.activite_id||''); return aid.indexOf('PING') >= 0 || aid.indexOf('tt-') === 0; });
@@ -6155,7 +6155,7 @@ function envoyerEmailBasculeListe(email, rows, actNomBasculee, tarifBascule, isP
         ? '\nMontant a regler : ' + totalARegler.toFixed(2) + ' EUR'
         : '\nAucun supplement - adhesion deja reglee.')
     + (commentaireAdmin ? '\n\nNote de l\'equipe FRI : ' + commentaireAdmin : '')
-    + '\n\nContact : frisneauville@orange.fr | 02.35.59.01.01';
+    + '\n\nContact : frisneauville@orange.fr | 06.80.78.95.77';
   envoyerEmail(email, sujet, bodyTxt, opts);
   Logger.log('Email bascule adherent envoye : ' + email);
 }
@@ -7089,7 +7089,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
     + '<div style="background:#e8f4fd;border-left:4px solid #2980b9;border-radius:6px;padding:12px;margin-top:16px;font-size:13px;line-height:1.7">'
     + '<strong>Permanences</strong> : tous les <strong>mardis de 16h30 à 18h30</strong> <em>(période scolaire)</em><br>'
     + 'Salle des fêtes — Place A. Cramilly, 76230 Isneauville</div>'
-    + '<p style="margin-top:14px;font-size:13px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0235590101" style="color:#2d6a4f">02.35.59.01.01</a></p>'
+    + '<p style="margin-top:14px;font-size:13px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0680789577" style="color:#2d6a4f">06.80.78.95.77</a></p>'
     + '</div>'
     + '<div style="background:#f5f5f5;padding:10px;text-align:center;font-size:11px;color:#aaa">' + NOM_ASSO + ' — www.frisneauville.fr</div>'
     + '</div></body></html>';
@@ -7106,7 +7106,7 @@ function envoyerEmailAdherent(email, rows, isPaid, modeLabel, pdfBlob) {
   envoyerEmail(email, sujet,
     'Bonjour '+prenom+' '+nom+',\n\n'+(isPaid?'Votre inscription est validée.':'Votre demande est enregistrée.')
     +'\nTotal : '+f.totalActivites.toFixed(2)+' €'+(f.totalDeductions>0?'\nSolde : '+f.solde.toFixed(2)+' €':'')
-    +'\n\nContact : frisneauville@orange.fr | 02.35.59.01.01', opts);
+    +'\n\nContact : frisneauville@orange.fr | 06.80.78.95.77', opts);
   Logger.log('Email adhérent envoyé : '+email+(pdfBlob?' + PDF joint':''));
 }
 
@@ -7386,7 +7386,7 @@ function envoyerEmailSuppressionActivite(params) {
         ? 'Détail de votre dossier :\n' + lignesTexte.join('\n') + '\n\nNouveau montant total : ' + totalApres.toFixed(2) + ' €'
         : 'Il ne reste plus d\'activité dans votre dossier.')
     + remiseNote + avoirTexte
-    + '\n\nContact : frisneauville@orange.fr | 02.35.59.01.01\nCordialement,\nLe Foyer Rural d\'Isneauville';
+    + '\n\nContact : frisneauville@orange.fr | 06.80.78.95.77\nCordialement,\nLe Foyer Rural d\'Isneauville';
 
   // ── Lignes activités HTML ──
   var lignesHtml = lignes.map(function(r, i) {
@@ -7460,7 +7460,7 @@ function envoyerEmailSuppressionActivite(params) {
     + (estRegle ? ' <em>(dossier réglé)</em>' : '') + '.</p>'
     + remiseNoteHtml + tableHtml + avoirHtml
     + '<hr style="border:none;border-top:1px solid #e0e0e0;margin:16px 0">'
-    + '<small style="color:#888">Contact : frisneauville@orange.fr | 02.35.59.01.01</small></div></div>';
+    + '<small style="color:#888">Contact : frisneauville@orange.fr | 06.80.78.95.77</small></div></div>';
 
   // ── Envoi adhérent ──
   try {
@@ -8078,7 +8078,7 @@ function creerAvoirManuelGAS(code, motif, montant, emailDest, nomDest, prenomDes
         + '<div style="background:#e8f4fd;border-left:4px solid #2980b9;border-radius:6px;padding:11px;margin-top:14px;font-size:13px;line-height:1.7">'
         + '<strong>Permanences</strong> : tous les <strong>mardis de 16h30 à 18h30</strong> <em>(période scolaire)</em><br>'
         + 'Salle des fêtes — Place A. Cramilly, 76230 Isneauville</div>'
-        + '<p style="margin-top:16px;font-size:12px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0235590101" style="color:#2d6a4f">02.35.59.01.01</a></p>'
+        + '<p style="margin-top:16px;font-size:12px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0680789577" style="color:#2d6a4f">06.80.78.95.77</a></p>'
         + '<p style="font-size:12px;color:#aaa;margin-top:8px">Cordialement,<br>L\'équipe du Foyer Rural d\'Isneauville</p>'
         + '</div></div></body></html>';
 
@@ -8170,7 +8170,7 @@ function creerRemboursementManuelGAS(code, motif, montant, modeRemb, emailDest, 
         + '<div style="background:#e8f4fd;border-left:4px solid #2980b9;border-radius:6px;padding:11px;margin-top:14px;font-size:13px;line-height:1.7">'
         + '<strong>Permanences</strong> : tous les <strong>mardis de 16h30 à 18h30</strong> <em>(période scolaire)</em><br>'
         + 'Salle des fêtes — Place A. Cramilly, 76230 Isneauville</div>'
-        + '<p style="margin-top:16px;font-size:12px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0235590101" style="color:#2d6a4f">02.35.59.01.01</a></p>'
+        + '<p style="margin-top:16px;font-size:12px;color:#555">Contact : <a href="mailto:frisneauville@orange.fr" style="color:#2d6a4f">frisneauville@orange.fr</a> — <a href="tel:0680789577" style="color:#2d6a4f">06.80.78.95.77</a></p>'
         + '<p style="font-size:12px;color:#aaa;margin-top:8px">Cordialement,<br>L\'équipe du Foyer Rural d\'Isneauville</p>'
         + '</div></div></body></html>';
 

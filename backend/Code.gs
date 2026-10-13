@@ -3304,8 +3304,11 @@ function chercherDossierFamilleGAS(emailBrut, nomBrut) {
     if (String(r[19] || '').trim() !== code) return;
     if (lireStatutInscription(r).toLowerCase().indexOf('supprim') >= 0) return;
     var k = norm(r[3]) + '|' + norm(r[2]);
-    if (membres[k]) return;
-    membres[k] = { prenom: String(r[3] || '').trim(), nom: String(r[2] || '').trim(), ddn: formaterDdn(r[4]), sexe: lireSexe(r) };
+    // Questionnaire de santé déjà transmis : attestation signée, certificat (requis ou reçu) ou « QS déjà fourni »
+    var qs = String(r[34] || '').toLowerCase();
+    var qsOk = qs.indexOf('attestation ok') >= 0 || qs.indexOf('certificat') >= 0 || qs.indexOf('déjà fourni') >= 0;
+    if (membres[k]) { if (qsOk) membres[k].qsFourni = true; return; }
+    membres[k] = { prenom: String(r[3] || '').trim(), nom: String(r[2] || '').trim(), ddn: formaterDdn(r[4]), sexe: lireSexe(r), qsFourni: qsOk };
     ordre.push(k);
   });
   var nbElig = 0;
@@ -3857,8 +3860,16 @@ function addRegistration(rows, paymentStatus, payload) {
         for (var dc = 0; dc < colCodes.length; dc++) {
           if (String(colCodes[dc][0] || '').trim() === codeDossier) {
             // Même code : vrai doublon (même famille, nouvel envoi) ou numéro déjà attribué à une autre famille ?
-            var emailExistant = String(sheetCheck.getRange(dc + 2, 16).getValue() || '').trim().toLowerCase();
+            // La famille est reconnue par l'un des emails (principal ou second) de n'importe quelle ligne du dossier.
             var emailNouveau  = String(rows[0].email1 || '').trim().toLowerCase();
+            var emailsNouveaux = [emailNouveau, String(rows[0].email2 || '').trim().toLowerCase()].filter(String);
+            var emailsDossier = {};
+            sheetCheck.getRange(2, 16, sheetCheck.getLastRow() - 1, 4).getValues().forEach(function(re, ie) {
+              if (String(colCodes[ie][0] || '').trim() !== codeDossier) return;
+              [re[0], re[3]].forEach(function(e) { e = String(e || '').trim().toLowerCase(); if (e) emailsDossier[e] = true; });
+            });
+            var memeFamille = !Object.keys(emailsDossier).length || emailsNouveaux.some(function(e) { return emailsDossier[e]; });
+            var emailExistant = memeFamille ? emailNouveau : 'autre';
             if (emailExistant && emailNouveau && emailExistant !== emailNouveau) {
               Logger.log('⚠️ addRegistration — code ' + codeDossier + ' déjà pris par une autre famille');
               return { inserted: 0, codePris: true, error: 'Numéro de dossier déjà utilisé' };

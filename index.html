@@ -1887,8 +1887,17 @@ function actNecessiteQS(actId) {
 }
 
 // Retourne true si le membre a au moins une activité sportive nécessitant un QS
+// Membre déjà inscrit au dossier existant avec son questionnaire de santé déjà transmis
+function qsDejaFourni(membre) {
+  const d = state.dossierExistant;
+  if (!d || !membre) return false;
+  const x = (d.membres || []).find(y => _normNom(y.prenom) === _normNom(membre.prenom) && _normNom(y.nom) === _normNom(membre.nom));
+  return !!(x && x.qsFourni);
+}
+
 function membreNecessiteQS(membre) {
   if (!membre.activities || membre.activities.length === 0) return false;
+  if (qsDejaFourni(membre)) return false;
   return membre.activities.some(function(actId){ return actNecessiteQS(actId); });
 }
 
@@ -2076,13 +2085,20 @@ function afficherModalDossierExistant(d) {
     + '<button type="button" id="dex-oui" class="btn btn-primary" style="flex:2;justify-content:center">➕ Ajouter à mon dossier</button>'
     + '</div></div>';
   document.body.appendChild(modal);
-  document.getElementById('dex-non').onclick = () => { modal.remove(); state.dossierExistant = null; dossiersExistantsActCount = 0; goStep(2); };
+  document.getElementById('dex-non').onclick = () => {
+    modal.remove(); state.dossierExistant = null; dossiersExistantsActCount = 0;
+    // Nouveau dossier : ne pas réutiliser le numéro du dossier existant
+    if (state.codeDossierPreview === d.code) state.codeDossierPreview = null;
+    try { if (localStorage.getItem('fri_code_session') === d.code) localStorage.removeItem('fri_code_session'); } catch(e) {}
+    goStep(2);
+  };
   document.getElementById('dex-oui').onclick = () => { modal.remove(); activerAjoutDossierExistant(d); };
   setTimeout(() => document.getElementById('dex-oui')?.focus(), 50);
 }
 
 function activerAjoutDossierExistant(d) {
   state.dossierExistant = { code: d.code, membres: d.membres || [], nbActivitesEligibles: d.nbActivitesEligibles || 0 };
+  state.codeDossierPreview = d.code;   // tous les documents et l'enregistrement utilisent le numéro existant
   dossiersExistantsActCount = d.nbActivitesEligibles || 0;   // compte pour la remise famille 15 %
   try { localStorage.setItem('fri_code_session', d.code); } catch(e) {}  // même numéro de dossier
   // Pré-remplir les membres déjà inscrits (ils pourront choisir de nouvelles activités)
@@ -3961,6 +3977,14 @@ function renderHealth() {
   }
 
   c.innerHTML = state.members.map(m => {
+    // Membre déjà inscrit au dossier : son questionnaire de santé a déjà été transmis
+    if (m.activities && m.activities.length && qsDejaFourni(m)) {
+      m.qsResult = 'qs_deja_fourni';
+      return '<div class="qs-block" style="background:#e8f5e9;border-left:4px solid var(--green);padding:16px 20px;border-radius:10px;">'
+        + '<div style="font-size:14px;font-weight:700;color:var(--green);">✅ ' + escHtml(m.prenom + ' ' + m.nom) + ' — questionnaire de santé déjà fourni</div>'
+        + '<p style="font-size:13px;color:#555;margin:6px 0 0;">Il a été transmis avec le dossier ' + escHtml(state.dossierExistant.code) + ' : rien à refaire pour ce membre.</p>'
+        + '</div>';
+    }
     // Si toutes les activités sont non-sportives → pas de QS pour ce membre
     if (!membreNecessiteQS(m)) {
       m.qsResult = 'no_qs_needed'; // Marquer automatiquement
@@ -4580,6 +4604,7 @@ function buildRows(reg) {
           ancv_montant: reg.responsable.ancvMontant || 0,
           fftt_price: (m.ffttWant && m.ffttPrice) ? Number(m.ffttPrice) : 0,
           qs_sante: m.qsResult === 'attestation_ok' ? 'Attestation OK'
+                  : m.qsResult === 'qs_deja_fourni' ? 'QS déjà fourni'
                   : m.qsResult === 'certificat_requis' ? (m.certifMedEnvoye ? 'Certificat transmis' : 'Certificat requis')
                   : m.qsResult === 'no_qs_needed' ? 'Pas de QS (activité non sportive)'
                   : m.qsResult === 'qs_answers_ok' ? 'Non signé' : 'Non rempli',
@@ -4658,6 +4683,7 @@ function buildRows(reg) {
         atout_code:          reg.responsable.atoutCode || '',
         fftt_price: (m.ffttWant && m.ffttPrice) ? Number(m.ffttPrice) : 0,
         qs_sante: m.qsResult === 'attestation_ok' ? 'Attestation OK'
+                : m.qsResult === 'qs_deja_fourni' ? 'QS déjà fourni'
                 : m.qsResult === 'certificat_requis' ? (m.certifMedEnvoye ? 'Certificat transmis' : 'Certificat requis')
                 : m.qsResult === 'no_qs_needed' ? 'Pas de QS (activité non sportive)' : 'Non rempli',
         pass_aide: (function(){
@@ -4903,8 +4929,8 @@ function saveDossier() {
     return;
   }
   captureResponsable();
-  // Réutiliser le code généré lors du QS Santé si disponible
-  const code = state.codeDossierPreview || generateDossierCode();
+  // Ajout à un dossier existant : son numéro ; sinon celui généré lors du QS Santé
+  const code = state.dossierExistant ? state.dossierExistant.code : (state.codeDossierPreview || generateDossierCode());
   const reg = {
     date: formatDateFRI(),
     id: Date.now(),
@@ -4971,7 +4997,17 @@ function saveDossier() {
 
   // Activer l'étape 2 (Règlement intérieur) et scroller dessus
   const cardBRI2 = document.getElementById('card-step-b');
-  if (cardBRI2) {
+  if (cardBRI2 && state.dossierExistant) {
+    // Ajout à un dossier existant : le règlement intérieur a déjà été signé pour ce dossier
+    cardBRI2.style.opacity = '1';
+    cardBRI2.style.pointerEvents = 'none';
+    cardBRI2.style.borderLeftColor = 'var(--green)';
+    cardBRI2.innerHTML = '<div class="card-title"><span style="background:var(--green);color:white;border-radius:50%;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;margin-right:8px">2</span>Règlement intérieur</div>'
+      + '<p style="font-size:14px;color:var(--green);font-weight:600;margin:0;">✅ Déjà signé pour le dossier ' + escHtml(state.dossierExistant.code) + ' — rien à refaire.</p>';
+    state.riSignature = null;
+    try { localStorage.removeItem('fri_ri_pending'); } catch(e) {}
+    activerEtapeB3();
+  } else if (cardBRI2) {
     cardBRI2.style.opacity = '1';
     cardBRI2.style.pointerEvents = 'auto';
     cardBRI2.style.borderLeftColor = 'var(--green)';

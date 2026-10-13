@@ -2314,6 +2314,14 @@ function traiterRequete(e) {
       var resSA=supprimerActiviteGAS(String(payload.code||'').trim(),payload.actNom||'',payload.actId||'',payload.membreNom||'',payload.placesId||'',payload.commentaireAdmin||'',payload.montantModifie===true||payload.montantModifie==='true',parseFloat(payload.avoir)||0);
       return repondreAvecCb(resSA,null,null,callback);
     }
+    if(payload.action==='bilanDossier'){
+      return repondreAvecCb(bilanFinancierDossier(String(payload.code||'').trim().toUpperCase()),null,null,callback);
+    }
+    if(payload.action==='recalculerDossier'){
+      var codeRD = String(payload.code||'').trim().toUpperCase();
+      try { recalculerRemiseDossier(SpreadsheetApp.openById(SHEET_ID), codeRD); } catch(eRD) { Logger.log('recalculerDossier KO : ' + eRD); }
+      return repondreAvecCb(bilanFinancierDossier(codeRD),null,null,callback);
+    }
     if(payload.action==='statsRemises'){
       return repondreAvecCb(calculerRemisesFamille(),null,null,callback);
     }
@@ -2844,7 +2852,7 @@ var ACTIONS_ADMIN = [
   'creerAvoirManuel', 'creerRemboursementManuel', 'envoyerRappelManuel', 'envoyerRappelPieces',
   'exportGestafillSheet', 'genererPDFInscriptionAdmin', 'getStatsTresorier',
   'getJournalSauvegardes', 'viderJournalSauvegardes', 'verifierDossiersPerdus',
-  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle', 'simulerSuppressionActivite', 'statsRemises',
+  'renvoyerEmailInscription', 'supprimerActiviteDossier', 'supprimerActiviteNonRegle', 'simulerSuppressionActivite', 'statsRemises', 'bilanDossier', 'recalculerDossier',
   'supprimerDossier', 'validerPaiement', 'validerPaiementBascule',
   'getElementsPaiement', 'validerElementPaiement', 'ajouterActiviteDossier', 'ecrireCheques',
   'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier',
@@ -3453,6 +3461,63 @@ function piecesFamilleGAS(codeBrut, emailBrut) {
   return controlerPiecesDossier(lecture.dossier.code);
 }
 
+// ── Bilan financier complet d'un dossier (console admin) ──
+// Recalcule tout : activités (remise 15 % si ≥ 3 activités éligibles), adhésions, total dû,
+// encaissements par moyen (onglets Espèces, Chèques, HelloAsso, Aides, Avoirs + coches « Reçu » de la console)
+// et reste à régler. Indique les lignes d'activité non réglées (ajoutées après le règlement initial).
+function bilanFinancierDossier(code) {
+  if (!/^FRI-[A-Z0-9]{4}$/.test(code)) return {status:'error', message:'Code invalide'};
+  var ss = SpreadsheetApp.openById(SHEET_ID), sh = ss.getSheetByName(SHEET_INSCRIPTIONS);
+  if (!sh || sh.getLastRow() < 2) return {status:'error', message:'Feuille vide'};
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, 41).getValues().filter(function(r) { return String(r[19] || '').trim() === code; });
+  if (!data.length) return {status:'error', message:'Dossier introuvable'};
+  var commune = communeFromVille(data[0][10]);
+  var lignes = [], membres = {}, nbElig = 0, totalSheet = 0;
+  data.forEach(function(r) {
+    var st = lireStatutInscription(r).toLowerCase();
+    if (st.indexOf('supprim') >= 0 || String(r[21] || '').toLowerCase().indexOf('supprim') >= 0) return;
+    var pid = lireActiviteId(r), attente = st.indexOf('attente') >= 0;
+    var l = {membre: (String(r[3] || '') + ' ' + String(r[2] || '')).trim(), activite: String(r[22] || '').replace(/\n/g, ' — '),
+             pid: pid, brut: Number(r[27]) || 0, eligible: estEligibleRemise(pid, commune), attente: attente,
+             regle: !attente && _estStatutRegle(r[21]), statutPaiement: String(r[21] || '')};
+    totalSheet = Math.max(totalSheet, Number(r[31]) || 0);
+    if (!attente) { membres[l.membre] = true; if (l.eligible) nbElig++; }
+    lignes.push(l);
+  });
+  var remise = nbElig >= 3, totalActivites = 0, totalRemise = 0;
+  lignes.forEach(function(l) {
+    l.net = l.attente ? 0 : (remise && l.eligible ? Math.round(l.brut * 0.85 * 100) / 100 : l.brut);
+    if (!l.attente) { totalActivites += l.brut; totalRemise += l.brut - l.net; }
+  });
+  var nbMembres = Object.keys(membres).length;
+  var adhesions = nbMembres * 15;
+  var totalDu = Math.round((totalActivites - totalRemise + adhesions) * 100) / 100;
+
+  // Encaissements déclarés dans les onglets de règlement
+  var suivi = {};
+  try { var ls = lireSuiviAdmin(code); suivi = (ls && ls.suivi && ls.suivi[code]) || {}; } catch(e) {}
+  var elements = (getElementsPaiementGAS(code).elements || []).filter(function(e) { return e.ongletReel !== 'Licences FFTT'; });
+  var recu = 0, attenteEnc = 0;
+  var encaissements = elements.map(function(e) {
+    var stS = String(e.statut || '').toLowerCase();
+    var cle = 'pay_' + String(e.onglet).replace(/[^A-Za-z0-9]/g, '_');
+    var estRecu = suivi[cle] === 'recu' || stS.indexOf('valid') >= 0 || stS.indexOf('reçu') >= 0 || stS.indexOf('recu') >= 0 || stS.indexOf('✅') >= 0 || stS.indexOf('payé') >= 0;
+    if (suivi[cle] === 'attente') estRecu = false;
+    if (estRecu) recu += e.montant; else attenteEnc += e.montant;
+    return {moyen: e.ongletReel || e.onglet, libelle: e.onglet, montant: e.montant, recu: estRecu, nom: (e.prenom + ' ' + e.nom).trim()};
+  });
+  recu = Math.round(recu * 100) / 100; attenteEnc = Math.round(attenteEnc * 100) / 100;
+  var reste = Math.round((totalDu - recu) * 100) / 100;
+  var nonCouvert = Math.round((totalDu - recu - attenteEnc) * 100) / 100;
+  var lignesNonReglees = lignes.filter(function(l) { return !l.attente && !l.regle; });
+  var etat = reste <= 0.01 ? 'regle' : (recu > 0 ? 'partiel' : 'non_regle');
+  return {status:'ok', code: code, lignes: lignes, nbEligibles: nbElig, remise: remise,
+          totalActivites: Math.round(totalActivites * 100) / 100, totalRemise: Math.round(totalRemise * 100) / 100,
+          nbMembres: nbMembres, adhesions: adhesions, totalDu: totalDu, totalSheet: totalSheet,
+          encaissements: encaissements, recu: recu, attente: attenteEnc, reste: reste, nonCouvert: nonCouvert,
+          nbLignesNonReglees: lignesNonReglees.length, etat: etat};
+}
+
 // ── Montant total des remises famille 15 % accordées (console admin, ou à lancer depuis l'éditeur) ──
 // Même règle que le calcul des dossiers : un dossier qui compte au moins 3 activités éligibles
 // (colonne « Éligible remise » = 1, hors liste d'attente et lignes supprimées) a 15 % sur chacune d'elles.
@@ -4042,6 +4107,8 @@ function addRegistration(rows, paymentStatus, payload) {
   SpreadsheetApp.flush();
   Logger.log("addReg step3: avant calcTotalFamille");
   try { calcTotalFamille(ss, rows[0].code_dossier || ''); } catch(etf) { Logger.log('calcTotalFamille KO: '+etf); }
+  // Ajout à un dossier existant : remise 15 % et total recalculés sur l'ensemble du dossier
+  if (ajoutDossier) { try { recalculerRemiseDossier(ss, rows[0].code_dossier || ''); } catch(eRR) { Logger.log('Recalcul dossier (ajout) KO: ' + eRR); } }
   var statutMap={};
   try{statutMap=incrementPlaces(ss,rows);}catch(e){Logger.log('Places KO: '+e);}
 
@@ -5572,7 +5639,7 @@ function recalculerRemiseDossier(ss, code) {
     var statut22 = String(data[i][21] || '').toLowerCase();
     if (statut38.indexOf('supprimée') >= 0 || statut22.indexOf('supprimée') >= 0) continue;
     if (statut38.indexOf('attente') >= 0) continue;
-    var pid = String(data[i][37] || '').trim();
+    var pid = lireActiviteId(data[i]);
     var tarifActuel = Number(data[i][27] || 0);
     lignesActives.push({ idx: i, pid: pid, tarifActuel: tarifActuel });
     if (eligibleRemise(pid) && !seenPids[pid]) { seenPids[pid] = true; nbEligibles++; }
@@ -5601,7 +5668,7 @@ function recalculerRemiseDossier(ss, code) {
         brut = l.tarifActuel;
       }
       // Éligible : col 29 (Oui/Non) — fallback sur estEligible(pid)
-      var elig = eligVal === 1 || (eligVal !== 1 && eligVal !== 0 && estEligible(l.pid));
+      var elig = eligVal === 1 || (eligVal !== 1 && eligVal !== 0 && eligibleRemise(l.pid));
       if (eligVal !== 1 && eligVal !== 0) {
         sheet.getRange(l.idx + 2, 29).setValue(elig ? 1 : 0);
       }
@@ -5619,8 +5686,10 @@ function recalculerRemiseDossier(ss, code) {
     var rn      = l.idx + 2;
     // col 28 AB : tarif brut (valeur fixe, ne change jamais)
     sheet.getRange(rn, 28).setValue(brut);
-    // col 29 AC : éligible (écrire si absent)
-    var acVal = data[l.idx][28]; if (acVal !== 1 && acVal !== 0) {
+    // col 29 AC : éligible — toujours recalculé selon la règle (activité + commune), y compris
+    // pour les lignes plus anciennes du dossier : un ajout d'activités peut déclencher la remise
+    estElig = eligibleRemise(l.pid);
+    var acVal = data[l.idx][28]; if (acVal !== (estElig ? 1 : 0)) {
       sheet.getRange(rn, 29).setValue(estElig ? 1 : 0)
         .setBackground(estElig ? '#e8f5e9' : '#fce4ec')
         .setFontColor(estElig ? '#1b5e20' : '#b71c1c').setFontWeight('bold');
@@ -8748,6 +8817,8 @@ function getElementsPaiementGAS(code) {
         // Espèces : A=code B=nom C=prénom D=email  E=montant  F=date    G=statut → montant=row[4]
         var isCheque = nomOnglet.indexOf('Cheque') >= 0 || nomOnglet.indexOf('Chèque') >= 0;
         var montIdx = isCheque ? 5 : 4;
+        // HelloAsso : E = montant du dossier, F = montant réellement versé (préféré quand il est renseigné)
+        if (nomOnglet === 'HelloAsso' && Number(row[5]) > 0) montIdx = 5;
         var montRaw = row[montIdx];
         var montEl = (typeof montRaw === 'number' && montRaw > 0 && montRaw < 1e10) ? montRaw
                    : (typeof montRaw === 'string' && parseFloat(montRaw) > 0) ? parseFloat(montRaw) : 0;

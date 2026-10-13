@@ -8605,7 +8605,9 @@ function renderAdmin() {
     const bgRow = isPending
       ? 'background:rgba(201,168,76,0.07);border-bottom:1px solid rgba(201,168,76,0.15);'
       : `border-bottom:1px solid rgba(255,255,255,0.06);${i%2===0?'':'background:rgba(255,255,255,0.02)'}`;
-    const statusBadge = isPending
+    const statusBadge = isPending && reg._partiel
+      ? `<span title="Activité ajoutée après le règlement : complément à encaisser" style="background:rgba(230,126,34,0.25);color:#ffab40;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap;">&#x2795; Complément à régler</span>`
+      : isPending
       ? `<span style="background:rgba(201,168,76,0.25);color:var(--gold);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap;">&#x23F3; En attente</span>`
       : `<span style="background:rgba(45,106,79,0.25);color:#52b788;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap;">&#x2705; Valid\u00e9</span>`;
     const modeIcon = {helloasso:'&#x1F4B3;',cheque:'&#x1F4DD;',especes:'&#x1F4B5;',ancv:'&#x1F3AB;'}[reg.responsable.modePaiement]||'&#x1F4B0;';
@@ -8762,6 +8764,11 @@ function ouvrirDetailDossier(code, docId) {
     + '<div id="pieces-auto-' + docId + '" style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(255,255,255,0.05);font-size:12px;color:rgba(255,255,255,0.7);">⏳ Contrôle automatique des pièces (Drive)…</div>'
     + '</div>';
 
+  // Bilan financier recalculé par le serveur (activités, remise, adhésions, encaissements, reste à régler)
+  const bilanHtml = '<div style="margin-bottom:14px;">'
+    + '<div style="font-size:11px;font-weight:700;color:var(--green-light);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">&#x1F4B6; Bilan financier du dossier</div>'
+    + '<div id="detail-bilan-' + docId + '" style="font-size:12px;color:rgba(255,255,255,0.5);">⏳ Calcul du bilan…</div></div>';
+
   // Reglement & Aides — charge depuis le Sheet avec cases a cocher
   const aidesHtml = '<div style="margin-bottom:14px;">'
     + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
@@ -8821,7 +8828,8 @@ function ouvrirDetailDossier(code, docId) {
       <div>
         <span style="font-family:monospace;font-weight:700;font-size:16px;color:var(--green-light)">${code}</span>
         <span style="margin-left:10px;font-size:12px;color:rgba(255,255,255,0.5)">${formatDateAdmin(reg.date)}</span>
-        ${isPending ? `<span style="margin-left:8px;background:rgba(201,168,76,0.25);color:var(--gold);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;">&#x23F3; En attente</span>`
+        ${isPending && reg._partiel ? `<span style="margin-left:8px;background:rgba(230,126,34,0.25);color:#ffab40;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;">&#x2795; Complément à régler</span>`
+          : isPending ? `<span style="margin-left:8px;background:rgba(201,168,76,0.25);color:var(--gold);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;">&#x23F3; En attente</span>`
                     : `<span style="margin-left:8px;background:rgba(45,106,79,0.25);color:#52b788;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700;">&#x2705; Valid\u00e9</span>`}
       </div>
       <button onclick="fermerDetailDossier()"
@@ -8844,6 +8852,7 @@ function ouvrirDetailDossier(code, docId) {
       </div>
       ${activitesHtml}
       ${docsHtml}
+      ${bilanHtml}
       ${aidesHtml}
       ${actionsHtml}
     </div>`;
@@ -8854,6 +8863,7 @@ function ouvrirDetailDossier(code, docId) {
   // spécial (ex: "Uncaught ReferenceError: FRI is not defined" quand les
   // guillemets autour du code étaient perdus dans l'attribut onclick).
   setTimeout(() => afficherPiecesAuto(code, docId), 50);
+  setTimeout(() => afficherBilanDossier(code, docId), 80);
   if (!ouvrirDetailDossier._resync) {
     chargerCochesAdmin(code).then(change => {
       if (change && document.getElementById('admin-detail-panel')) {
@@ -9542,6 +9552,59 @@ async function chargerPiecesDossier(code, forcer) {
   } catch(e) { return null; }
 }
 
+// ── Bilan financier du dossier (console admin) ──
+async function afficherBilanDossier(code, docId, recalculer) {
+  const bloc = document.getElementById('detail-bilan-' + docId);
+  if (!bloc) return;
+  bloc.innerHTML = '⏳ ' + (recalculer ? 'Recalcul du dossier…' : 'Calcul du bilan…');
+  let b = null;
+  try {
+    const r = await callAppsScriptFetch(getAppsScriptUrl(), { action: recalculer ? 'recalculerDossier' : 'bilanDossier', code });
+    b = r && r.data ? nettoyerTexteRecu(r.data) : null;
+  } catch(e) {}
+  if (!document.body.contains(bloc)) return;
+  if (!b || b.status !== 'ok') {
+    bloc.innerHTML = '⚠️ Bilan indisponible' + (b && b.message ? ' : ' + escHtml(b.message) : '')
+      + ' <button onclick="afficherBilanDossier(\'' + escHtml(code) + '\',\'' + escHtml(docId) + '\')" style="background:none;border:1px solid rgba(255,255,255,0.3);color:white;border-radius:5px;padding:2px 8px;font-size:11px;cursor:pointer;">Réessayer</button>';
+    return;
+  }
+  const e2 = v => Number(v || 0).toFixed(2) + ' €';
+  const ligne = (g, d, style) => '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;' + (style || '') + '"><span>' + g + '</span><span style="white-space:nowrap;">' + d + '</span></div>';
+  let h = '<div style="background:rgba(255,255,255,0.05);border-radius:9px;padding:10px 12px;color:rgba(255,255,255,0.85);">';
+  // Activités
+  (b.lignes || []).forEach(l => {
+    const badge = l.attente ? '<span style="color:#80deea;">🕐 liste d\'attente</span>'
+      : l.regle ? '<span style="color:#52b788;">✅ réglée</span>' : '<span style="color:#ffab40;font-weight:700;">⏳ à régler</span>';
+    const prix = l.attente ? '—' : (l.net !== l.brut ? '<s style="opacity:.5">' + e2(l.brut) + '</s> ' + e2(l.net) : e2(l.net));
+    h += ligne(escHtml(l.membre) + ' — ' + escHtml(l.activite) + '<br><span style="font-size:10px;">' + badge
+      + (l.attente ? '' : (l.eligible ? ' · éligible remise' : ' · non remisable')) + '</span>', prix, 'border-bottom:1px solid rgba(255,255,255,0.06);');
+  });
+  h += ligne('Adhésions (' + b.nbMembres + ' × 15 €)', e2(b.adhesions));
+  h += ligne('Remise famille 15 % ' + (b.remise ? '(' + b.nbEligibles + ' activités éligibles)' : '— non applicable (' + b.nbEligibles + ' activité' + (b.nbEligibles > 1 ? 's' : '') + ' éligible' + (b.nbEligibles > 1 ? 's' : '') + ', 3 requises)'),
+    b.totalRemise ? '− ' + e2(b.totalRemise) : '0,00 €');
+  h += ligne('<b>Total dû</b>', '<b>' + e2(b.totalDu) + '</b>', 'border-top:1px solid rgba(255,255,255,0.15);margin-top:4px;padding-top:6px;');
+  // Encaissements
+  h += '<div style="margin-top:8px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:rgba(255,255,255,0.5);">Règlements par moyen</div>';
+  if (!(b.encaissements || []).length) h += '<div style="opacity:.6;padding:4px 0;">Aucun règlement enregistré dans les onglets de paiement.</div>';
+  (b.encaissements || []).forEach(en => {
+    h += ligne(escHtml(en.libelle) + (en.nom ? ' <span style="opacity:.5;font-size:10px;">' + escHtml(en.nom) + '</span>' : ''),
+      (en.recu ? '<span style="color:#52b788;">✅ ' : '<span style="color:#ffab40;">⏳ ') + e2(en.montant) + '</span>');
+  });
+  h += ligne('Reçu', '<span style="color:#52b788;">' + e2(b.recu) + '</span>');
+  if (b.attente > 0) h += ligne('Annoncé, pas encore reçu', '<span style="color:#ffab40;">' + e2(b.attente) + '</span>');
+  // Reste à régler
+  const coul = b.etat === 'regle' ? '#2d6a4f' : b.etat === 'partiel' ? '#b45309' : '#9b2c2c';
+  const txt = b.etat === 'regle' ? (b.reste < -0.01 ? '✅ Réglé — trop-perçu ' + e2(-b.reste) : '✅ Dossier entièrement réglé')
+    : '⏳ Reste à régler : ' + e2(b.reste) + (b.nbLignesNonReglees ? ' (' + b.nbLignesNonReglees + ' activité' + (b.nbLignesNonReglees > 1 ? 's' : '') + ' non réglée' + (b.nbLignesNonReglees > 1 ? 's' : '') + ')' : '');
+  h += '<div style="margin-top:8px;background:' + coul + ';color:white;border-radius:7px;padding:8px 10px;font-weight:700;font-size:13px;">' + txt + '</div>';
+  if (Math.abs((b.totalSheet || 0) - b.totalDu) > 0.01) {
+    h += '<div style="margin-top:8px;font-size:11px;color:#ffcc80;">⚠️ Le total enregistré dans le Sheet (' + e2(b.totalSheet) + ') diffère du calcul (' + e2(b.totalDu) + ').</div>'
+      + '<button onclick="afficherBilanDossier(\'' + escHtml(code) + '\',\'' + escHtml(docId) + '\',true)" style="margin-top:6px;width:100%;background:rgba(201,168,76,0.25);color:#f4d58d;border:1px solid rgba(201,168,76,0.5);border-radius:6px;padding:6px;font-size:12px;cursor:pointer;font-weight:600;">🔄 Recalculer le dossier dans le Sheet</button>';
+  }
+  h += '</div>';
+  bloc.innerHTML = h;
+}
+
 async function afficherPiecesAuto(code, docId) {
   const bloc = document.getElementById('pieces-auto-' + docId);
   if (!bloc) return;
@@ -10053,21 +10116,24 @@ function mergerDossiersSheet(dossiers) {
   });
 
 
-  // Recalculer le statut de chaque dossier apres avoir groupe toutes les lignes
-  // Un dossier est 'paid' si AU MOINS UNE ligne (non en attente) est payee
+  // Statut de chaque dossier une fois toutes ses lignes regroupées :
+  // réglé seulement si TOUTES les activités (hors liste d'attente et lignes supprimées) sont réglées.
+  // Activités ajoutées après le règlement et non payées → dossier « complément à régler » (_partiel).
+  const ligneReglee = r => {
+    const st = (r.statut || r.statut_paiement || '').toLowerCase();
+    if (st.includes('attente') || st.includes('cours') || st.includes('à valider')) return false;
+    return st.includes('valid') || st.includes('payé') || st.includes('paye') || st.includes('réglé') || st.includes('regle');
+  };
   Object.values(byCode).forEach(reg => {
     if (!reg._rows || reg._rows.length === 0) return;
-    const hasPayedLine = reg._rows.some(r => {
-      const st = (r.statut || r.statut_paiement || '').toLowerCase();
-      return st.includes('pay');
+    const payantes = reg._rows.filter(r => {
+      const si = (r.statut_inscription || '').toLowerCase(), sp = (r.statut || '').toLowerCase();
+      return !si.includes('supprim') && !sp.includes('supprim') && !si.includes('attente') && !sp.includes('non concern');
     });
-    const allAttenteNonPayees = reg._rows.every(r => {
-      const st = (r.statut || r.statut_paiement || '').toLowerCase();
-      return st.includes('attente') && !st.includes('pay') && !st.includes('glement re');
-    });
-    if (hasPayedLine) reg.status = 'paid';
-    else if (allAttenteNonPayees) reg.status = 'pending_manual';
-    // sinon garder le statut calcule depuis la premiere ligne
+    if (!payantes.length) return;
+    const nbReglees = payantes.filter(ligneReglee).length;
+    reg._partiel = nbReglees > 0 && nbReglees < payantes.length;
+    reg.status = nbReglees === payantes.length ? 'paid' : 'pending_manual';
   });
 
   // Fusionner dans localStorage — le Sheet fait autorité pour le statut
@@ -10080,6 +10146,7 @@ function mergerDossiersSheet(dossiers) {
     if (idx >= 0) {
       // Le Sheet fait autorité — écraser membres, activités et total
       local[idx].status      = sheetReg.status;
+      local[idx]._partiel    = !!sheetReg._partiel;
       local[idx]._fromSheet  = true;
       local[idx]._sheetTotal = sheetReg._sheetTotal || sheetReg.totals.grandTotal;
       local[idx].totals.grandTotal = local[idx]._sheetTotal;

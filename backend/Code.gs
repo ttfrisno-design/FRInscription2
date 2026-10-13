@@ -5655,6 +5655,12 @@ function supprimerActiviteNonRegleSheet(code, actNom, actId, membreNom, placesId
 // RECALCULER LA REMISE 15% — inchangé v8.2
 // ============================================================
 function recalculerRemiseDossier(ss, code) {
+  // Lancée depuis l'éditeur sans paramètre : recalcul de tous les dossiers
+  if (!ss || typeof ss.getSheetByName !== 'function') {
+    if (typeof ss === 'string' && /^FRI-/.test(ss)) { code = ss; ss = null; }
+    if (!code) { return recalculerTousLesDossiers(); }
+    ss = SpreadsheetApp.openById(SHEET_ID);
+  }
   Logger.log('recalculerRemiseDossier — code: ' + code);
   var sheet = ss.getSheetByName(SHEET_INSCRIPTIONS);
   if (!sheet || sheet.getLastRow() < 2) return;

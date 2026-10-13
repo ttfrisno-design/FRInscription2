@@ -129,6 +129,8 @@ function _envoyerAvecQuota(dest, sujet, corps, options, pourLeFRI) {
 
 // ── Mailjet (API v3.1). Adresse d'expédition : MAILJET_SENDER, validée dans Mailjet
 //    (idéalement sur le domaine fri-isneauville.fr avec SPF et DKIM configurés) ──
+// Adresse d'expédition Mailjet par défaut (domaine authentifié SPF + DKIM chez Mailjet) ; propriété MAILJET_SENDER pour en changer
+var MAILJET_SENDER_DEFAUT = 'contact@fri-isneauville.fr';
 function _mailjetConfigure() {
   return !!(_props.getProperty('MAILJET_API_KEY') && _props.getProperty('MAILJET_SECRET_KEY'));
 }
@@ -138,7 +140,7 @@ function _envoyerParMailjet(dest, sujet, corps, options) {
   try {
     var liste = function(v) { return String(v || '').split(',').map(function(a) { return a.trim(); }).filter(String).map(function(a) { return {Email: a}; }); };
     var msg = {
-      From: {Email: _props.getProperty('MAILJET_SENDER') || EMAIL_ADMIN, Name: options.name || NOM_ASSO},
+      From: {Email: _props.getProperty('MAILJET_SENDER') || MAILJET_SENDER_DEFAUT, Name: options.name || NOM_ASSO},
       To: liste(dest),
       Subject: sujet,
       TextPart: corps || (options.htmlBody ? String(options.htmlBody).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : ' '),
@@ -190,7 +192,7 @@ function _envoyerParMailjet(dest, sujet, corps, options) {
 // Diagnostic : Google joint-il Mailjet ? (à lancer depuis l'éditeur)
 function diagnostiquerMailjet() {
   var cles = _mailjetConfigure();
-  Logger.log('Clés Mailjet présentes : ' + cles + ' ; expéditeur : ' + (_props.getProperty('MAILJET_SENDER') || '(non défini → ' + EMAIL_ADMIN + ')'));
+  Logger.log('Clés Mailjet présentes : ' + cles + ' ; expéditeur : ' + (_props.getProperty('MAILJET_SENDER') || '(non défini → ' + MAILJET_SENDER_DEFAUT + ')'));
   ['https://api.mailjet.com/v3/REST/sender', 'https://api.mailjet.com/v3.1/send', 'https://www.mailjet.com/', 'https://api.helloasso.com/v5'].forEach(function(u) {
     try {
       var opt = {muteHttpExceptions: true, followRedirects: false};

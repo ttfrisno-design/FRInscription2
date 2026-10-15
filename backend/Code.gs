@@ -2117,7 +2117,8 @@ function traiterRequete(e) {
           // Lien HelloAsso : complément (réglé) ou totalité (non réglé)
           var montantHA = 0;
           if(isPaid && diff > 0) montantHA = Math.round(diff * 100);
-          else if(!isPaid && totalNet > 0) montantHA = Math.round(Math.max(0, totalNet - _deductionsDossier(dataM, codeM)) * 100);
+          var resteMod = isPaid ? 0 : resteARegler(codeM).reste;
+          if(!isPaid) montantHA = Math.round(resteMod * 100);
           var lienHA = HELLOASSO_URL;
           try {
             if(montantHA > 0 && emailRow.email)
@@ -2160,18 +2161,18 @@ function traiterRequete(e) {
                 + '</div>' : '';
           } else if(!isPaid && diff > 0) {
             // 3. Non réglé + nouvelle plus chère → total à régler (montant complet)
-            sujetSuffixe = 'Règlement à effectuer — ' + totalNet.toFixed(2) + ' €';
+            sujetSuffixe = 'Règlement à effectuer — ' + resteMod.toFixed(2) + ' €';
             diffLigneHtml = '<span style="color:#e65100;font-weight:bold;">+ '+diff.toFixed(2)+' € (nouvelle activité plus chère)</span>';
             situationHtml = '<div style="background:#fff3e0;border:1px solid #e65100;border-radius:8px;padding:14px;margin:12px 0;">'
-              + '<strong>⚠️ Règlement à effectuer : '+totalNet.toFixed(2)+' €</strong><br>'
+              + '<strong>⚠️ Reste à régler : '+resteMod.toFixed(2)+' €</strong><br>'
               + '<span style="font-size:13px;color:#555;">Votre dossier n’est pas encore réglé. Merci de régler la <strong>totalité</strong> de votre cotisation (et non la seule différence) via le bouton ci-dessous.</span>'
               + '</div>' + boutonHA;
           } else {
             // 4. Non réglé + nouvelle moins chère → total à régler (montant complet, réduit)
-            sujetSuffixe = 'Règlement à effectuer — ' + totalNet.toFixed(2) + ' €';
+            sujetSuffixe = 'Règlement à effectuer — ' + resteMod.toFixed(2) + ' €';
             diffLigneHtml = '<span style="color:#2d6a4f;font-weight:bold;">'+diff.toFixed(2)+' € (nouvelle activité moins chère)</span>';
             situationHtml = '<div style="background:#fff3e0;border:1px solid #e65100;border-radius:8px;padding:14px;margin:12px 0;">'
-              + '<strong>⚠️ Règlement à effectuer : '+totalNet.toFixed(2)+' €</strong><br>'
+              + '<strong>⚠️ Reste à régler : '+resteMod.toFixed(2)+' €</strong><br>'
               + '<span style="font-size:13px;color:#555;">Votre dossier n’est pas encore réglé. Le changement d’activité réduit le montant dû — merci de régler la <strong>totalité</strong> (montant déjà mis à jour) via le bouton ci-dessous.</span>'
               + '</div>' + boutonHA;
           }
@@ -3547,6 +3548,25 @@ function recalculerTousLesDossiers() {
     try { recalculerRemiseDossier(ss, liste[i]); n++; } catch(e) { Logger.log(liste[i] + ' KO : ' + e); }
   }
   Logger.log('✅ ' + n + ' / ' + liste.length + ' dossier(s) recalculé(s)');
+}
+
+// ── Reste à régler par la famille (emails de rappel / modification, lien HelloAsso) ──
+// = total dû (remise comprise) − aides, coupons ANCV et avoir déclarés − règlements déjà encaissés
+//   (espèces, chèques, HelloAsso marqués reçus). Même base que la facture PDF jointe.
+var MOYENS_REGLEMENT = ['Espèces', 'HelloAsso', 'Cheques 1', 'Cheques 2', 'Cheques 3'];
+function resteARegler(code) {
+  var b = bilanFinancierDossier(code);
+  if (b.status !== 'ok') return {totalDu: 0, deductions: 0, dejaRegle: 0, reste: 0};
+  var deductions = 0;
+  try {
+    var sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_INSCRIPTIONS);
+    deductions = _deductionsDossier(sh.getRange(2, 1, sh.getLastRow() - 1, 41).getValues(), code);
+  } catch(e) {}
+  var dejaRegle = (b.encaissements || []).filter(function(e) { return e.recu && MOYENS_REGLEMENT.indexOf(e.moyen) >= 0; })
+    .reduce(function(t, e) { return t + e.montant; }, 0);
+  dejaRegle = Math.round(dejaRegle * 100) / 100;
+  return {totalDu: b.totalDu, deductions: deductions, dejaRegle: dejaRegle,
+          reste: Math.max(0, Math.round((b.totalDu - deductions - dejaRegle) * 100) / 100)};
 }
 
 // ── Montant total des remises famille 15 % accordées (console admin, ou à lancer depuis l'éditeur) ──
@@ -5023,7 +5043,8 @@ function appliquerModificationDossier(params) {
       : '<div style="margin:10px 0;padding:8px 14px;background:#fff3e0;border-left:4px solid #e65100;border-radius:4px;color:#e65100">➖ Activité supprimée : <strong>' + actNomClean + '</strong></div>';
 
     // Montant à régler : complément d'un dossier déjà réglé, ou total d'un dossier non réglé
-    var montantARegler = estRegle ? supplement : totalApres;   // non réglé : le nouveau total reste à régler
+    // Non réglé : le reste réel (total − aides / ANCV / avoir déclarés − règlements déjà encaissés)
+    var montantARegler = estRegle ? supplement : resteARegler(code).reste;
     var lienPaiement = '';
     if (montantARegler > 0 && emailAdherent) {
       var partsResp = String(responsable || '').trim().split(' ');
@@ -10317,8 +10338,10 @@ function envoyerRappelManuelGAS(code) {
   // Réinitialiser le verrou de rappel pour permettre un nouvel envoi
   PropertiesService.getScriptProperties().deleteProperty('rappel_' + code);
 
-  // Envoyer le mail rappel via envoyerMailRappel (même fonction que le rappel auto)
-  var total = parseFloat(r0.total_famille) || 0;
+  // Montant réellement restant : total − aides / ANCV / avoir déclarés − règlements déjà encaissés
+  var calcR = resteARegler(code);
+  var total = calcR.reste;
+  if (total <= 0) return {status:'error', message:'Rien à régler pour ' + code + ' : le dossier est couvert (aides, coupons ANCV ou règlements reçus). Validez-le dans la console.'};
   var dateInscription = r0.date || '';
 
   // Mail adhérent avec facture PDF
@@ -10341,9 +10364,12 @@ function envoyerRappelManuelGAS(code) {
       + (dateInscription ? ' du <strong>' + dateInscription + '</strong>' : '')
       + ' est en attente de règlement.</p>'
       + (total > 0 ? '<div style="background:#fff8e1;border:1px solid #e8c84a;border-radius:10px;padding:16px;margin:16px 0;text-align:center">'
-        + '<div style="font-size:13px;color:#856404;font-weight:700;margin-bottom:4px">💰 Montant à régler</div>'
+        + '<div style="font-size:13px;color:#856404;font-weight:700;margin-bottom:4px">💰 Reste à régler</div>'
         + '<div style="font-size:24px;font-weight:900;color:#1a2e22;">' + total.toFixed(2) + ' €</div>'
-        + '<div style="font-size:12px;color:#888;margin-top:4px">(activités + adhésion FNSMR)</div>'
+        + '<div style="font-size:12px;color:#888;margin-top:6px;line-height:1.6">Total du dossier (activités + adhésion) : ' + calcR.totalDu.toFixed(2) + ' €'
+        + (calcR.deductions > 0 ? '<br>Aides, coupons ANCV et avoir déduits : − ' + calcR.deductions.toFixed(2) + ' €' : '')
+        + (calcR.dejaRegle > 0 ? '<br>Déjà réglé : − ' + calcR.dejaRegle.toFixed(2) + ' €' : '')
+        + '</div>'
         + '</div>' : '')
       + '<p style="color:#555;line-height:1.7"><strong>Comment régler ?</strong></p>'
       + '<ul style="color:#555;line-height:2;padding-left:20px">'
@@ -10351,7 +10377,9 @@ function envoyerRappelManuelGAS(code) {
       + '<li>📅 <strong>Aux permanences</strong> : Mardi 16h30 – 18h30</li>'
       + '<li>✉️ <strong>Par courrier</strong> : Chèque à l\'ordre du Foyer Rural d\'Isneauville</li>'
       + '</ul>'
-      + helloassoBoutonHtml(null, total > 0 ? total.toFixed(2) + ' €' : null)
+      + helloassoBoutonHtml((function() {
+          try { return creerLienPaiementEmail(code, total, email, r0.responsable_prenom || '', r0.responsable_nom || '', 'Règlement dossier'); } catch(eL) { return null; }
+        })(), total > 0 ? total.toFixed(2) + ' €' : null)
       + (pdfBlob ? '<p style="color:#555;font-size:13px;margin-top:16px">📎 <em>Votre facture détaillée est jointe à cet email.</em></p>' : '')
       + '<p style="color:#888;font-size:12px;margin-top:16px">⚠️ <em>Sans règlement, votre inscription ne pourra pas être confirmée.</em></p>'
       + '<hr style="border:none;border-top:1px solid #eee;margin:20px 0">'

@@ -2369,7 +2369,9 @@ function recalcSolde() {
   const btnSoldeEl = document.getElementById('btn-payer-solde');
   if (btnSoldeEl) {
     if (solde <= 0) {
-      btnSoldeEl.style.display = 'none';
+      // Aides / coupons ANCV / avoir couvrent tout : le bouton mène à la confirmation de l'inscription
+      btnSoldeEl.style.display = '';
+      btnSoldeEl.textContent = '✅ Valider mon dossier — entièrement couvert par les aides';
     } else {
       btnSoldeEl.style.display = '';
       btnSoldeEl.textContent = '✅ Valider et procéder au règlement du solde : ' + solde.toFixed(2) + ' €';
@@ -8691,7 +8693,7 @@ function ouvrirDetailDossier(code, docId) {
   const isPending = reg.status === 'pending_manual';
   const resp = reg.responsable || {};
   const total = reg._sheetTotal || (reg.totals ? reg.totals.grandTotal : 0) || 0;
-  const modeLabels = {helloasso:'HelloAsso',cheque:'Ch\u00e8que',especes:'Esp\u00e8ces',ancv:'Coupon ANCV',cheque3:'Ch\u00e8ques \u00e9chelonn\u00e9s'};
+  const modeLabels = {helloasso:'HelloAsso',cheque:'Ch\u00e8que',especes:'Esp\u00e8ces',ancv:'Coupon ANCV',cheque3:'Ch\u00e8ques \u00e9chelonn\u00e9s',aide:'Sold\u00e9 par aides'};
   const modeLabel = modeLabels[resp.modePaiement] || resp.modePaiement || '—';
 
   // ── Activités ────────────────────────────────────────────────────────────

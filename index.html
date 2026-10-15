@@ -8167,6 +8167,15 @@ function renderAdminStats() {
       <div style="font-size:11px;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:0.5px">${s.label}</div>
     </div>`).join('');
 }
+// Liste des dossiers : « 15/10/26 » et l'heure en petit dessous (date complète au survol)
+function dateCourteAdmin(d) {
+  const txt = formatDateAdmin(d);
+  const m = String(txt).match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\D+(\d{1,2})[:h](\d{2}))?/);
+  if (!m) return escHtml(txt);
+  const jj = m[1].padStart(2, '0'), mm = m[2].padStart(2, '0'), aa = m[3].slice(-2);
+  return jj + '/' + mm + '/' + aa + (m[4] ? '<br><span style="font-size:10px;opacity:.7">' + m[4].padStart(2, '0') + ':' + m[5] + '</span>' : '');
+}
+
 function formatDateAdmin(d) {
   if (!d) return '—';
   var s = String(d);
@@ -8631,7 +8640,7 @@ function renderAdmin() {
       ? `<span title="${nbAttente} activité(s) en liste d'attente" style="display:inline-block;white-space:nowrap;background:rgba(255,152,0,0.2);color:#ffab40;border-radius:4px;padding:1px 6px;font-size:10px;font-weight:600;margin-left:4px;">&#x23F3;&nbsp;${nbAttente}&nbsp;att.</span>` : '';
 
     return `<tr style="${bgRow}" id="row-${docId}">
-      <td style="padding:8px 10px;white-space:nowrap;font-size:11px;color:rgba(255,255,255,0.45)">${formatDateAdmin(reg.date)}</td>
+      <td title="${escHtml(formatDateAdmin(reg.date))}" style="padding:8px 6px;white-space:nowrap;font-size:11px;line-height:1.3;color:rgba(255,255,255,0.45)">${dateCourteAdmin(reg.date)}</td>
       <td style="padding:8px 10px;font-family:monospace;font-weight:700;color:var(--green-light);font-size:12px">${reg.code||'—'}</td>
       <td style="padding:8px 10px">
         <div style="font-weight:600;color:white;font-size:12px">${reg.responsable.nom} ${reg.responsable.prenom}</div>

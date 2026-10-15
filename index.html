@@ -8197,6 +8197,28 @@ function formatDateAdmin(d) {
 // ══════════════════════════════════════════════════════════════
 // ADMIN — Basculer une activité de liste d'attente → inscrit
 // ══════════════════════════════════════════════════════════════
+// Activité d'une ligne du Sheet : identifiant « places », identifiant du site, sinon nom (+ jour / heure)
+function resoudreActiviteLigne(r) {
+  const id = r.activite_id || '';
+  let act = getActById(placesIdToActId(id) || id);
+  if (act) return act;
+  const norm = v => String(v || '').replace(/\n/g, ' — ').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const nom = norm(r.activite);
+  if (!nom) return null;
+  const memeNom = getAllActs().filter(a => norm(a.name) === nom);
+  return memeNom.find(a => (!r.jour || norm(a.jour) === norm(r.jour)) && (!r.heure || norm(a.heure) === norm(r.heure))) || memeNom[0] || null;
+}
+
+// Tarif d'une inscription en liste d'attente (enregistrée à 0 €) : tarif de l'activité pour ce membre
+// (Isneauville / hors commune, −30 € femme au tennis de table, prorata en cours de saison)
+function tarifLigneAttente(r, reg) {
+  const act = resoudreActiviteLigne(r);
+  if (!act) return Number(r.tarif_brut) || 0;
+  const membre = ((reg && reg.members) || []).find(m =>
+    _normNom(m.prenom) === _normNom(r.prenom_membre) && _normNom(m.nom) === _normNom(r.nom_membre)) || { sexe: r.sexe };
+  return tarifActiviteMembre(act, membre, estIsnoDossier(reg || {}));
+}
+
 async function basculerListeAttente(code, actId, actNom, prenomMembre, nomMembre, tarifBrut) {
   if (!requireAdmin()) return;
 
@@ -8727,10 +8749,7 @@ function ouvrirDetailDossier(code, docId) {
     ${rowsAttente.length ? `<div style="margin-bottom:14px;">
       <div style="font-size:11px;font-weight:700;color:#ffab40;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">&#x23F3; Activit\u00e9s en attente</div>
       ${rowsAttente.map(r => {
-        const actIdFront = placesIdToActId(r.activite_id||'')||r.activite_id;
-        const actDef = getActById(actIdFront);
-        const isno = (resp.commune==='isno')||(resp.ville||'').toUpperCase().includes('ISNEAUVILLE');
-        const tarif = actDef ? (isno?actDef.isno:actDef.hc) : (Number(r.tarif_brut)||0);
+        const tarif = tarifLigneAttente(r, reg);
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,152,0,0.1);font-size:12px;">
           <span style="color:#ffb74d;">${r.prenom_membre||''} ${r.nom_membre||''} \u2014 ${r.activite||r.activite_id||'?'}</span>
           <div style="display:flex;align-items:center;gap:6px;">

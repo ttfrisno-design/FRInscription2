@@ -3569,6 +3569,76 @@ function resteARegler(code) {
           reste: Math.max(0, Math.round((b.totalDu - deductions - dejaRegle) * 100) / 100)};
 }
 
+// ============================================================
+// PROPRIÉTÉS DU SCRIPT — affichage et réglage (l'écran Paramètres n'en montre que 50, en lecture seule)
+// ============================================================
+// À lancer depuis l'éditeur : liste TOUTES les propriétés, classées, valeurs sensibles masquées.
+function afficherProprietes() {
+  var toutes = PropertiesService.getScriptProperties().getProperties();
+  var cles = Object.keys(toutes).sort();
+  var secretes = /SECRET|TOKEN|PASS|CRED|KEY|CLIENT/i;
+  var groupes = {
+    'Configuration': [], 'Comptes admin': [], 'Jetons de paiement par email (pay_…)': [],
+    'Verrous paiements HelloAsso (ha_checkout_…)': [], 'Caches et suivi interne': []
+  };
+  cles.forEach(function(k) {
+    if (k.indexOf('pay_') === 0) groupes['Jetons de paiement par email (pay_…)'].push(k);
+    else if (k.indexOf('ha_checkout_') === 0) groupes['Verrous paiements HelloAsso (ha_checkout_…)'].push(k);
+    else if (k.indexOf('ADMIN_') === 0) groupes['Comptes admin'].push(k);
+    else if (/^(fri_|HA_TOKEN|FDS_|MAILJET_DERNIER|rappel_)/.test(k)) groupes['Caches et suivi interne'].push(k);
+    else groupes['Configuration'].push(k);
+  });
+  var masquer = function(k, v) {
+    v = String(v || '');
+    if (secretes.test(k)) return v ? v.slice(0, 4) + '…' + ' (' + v.length + ' caractères)' : '(vide)';
+    return v.length > 80 ? v.slice(0, 80) + '…' : v;
+  };
+  Logger.log('=== ' + cles.length + ' propriété(s) au total ===');
+  Object.keys(groupes).forEach(function(g) {
+    var liste = groupes[g];
+    if (!liste.length) return;
+    Logger.log('── ' + g + ' : ' + liste.length);
+    // Les jetons et verrous techniques sont seulement comptés (ils se créent et se nettoient tout seuls)
+    if (/^(Jetons|Verrous)/.test(g)) return;
+    liste.forEach(function(k) {
+      Logger.log('   ' + k + ' = ' + (g === 'Comptes admin' ? '(masqué)' : masquer(k, toutes[k])));
+    });
+  });
+  // Contrôles utiles pour la production / le test
+  var mode = toutes.FRI_MODE === 'test' ? 'TEST' : 'PRODUCTION';
+  Logger.log('=== Mode du projet : ' + mode + ' ===');
+  if (mode === 'PRODUCTION') {
+    ['FRI_SHEET_ID', 'FRI_EMAIL_TEST', 'HA_URL_TEST', 'HA_ORG_SLUG'].forEach(function(k) {
+      if (toutes[k]) Logger.log('⚠️ ' + k + ' est une propriété de test : à retirer (configurerProprietes)');
+    });
+  }
+  ['FRI_SECRET_TOKEN', 'HA_CLIENT_ID', 'HA_CLIENT_SECRET', 'MAILJET_API_KEY', 'MAILJET_SECRET_KEY'].forEach(function(k) {
+    if (!toutes[k]) Logger.log('⚠️ ' + k + ' absente' + (/MAILJET/.test(k) ? ' (envoi par Gmail uniquement)' : ''));
+  });
+}
+
+// À lancer depuis l'éditeur après avoir rempli A_DEFINIR (et/ou A_SUPPRIMER).
+// ⚠️ Une fois exécutée, EFFACEZ les valeurs saisies ci-dessous (ne laissez pas de clé secrète dans le code).
+function configurerProprietes() {
+  var A_DEFINIR = {
+    // 'MAILJET_API_KEY':    'collez la clé API ici',
+    // 'MAILJET_SECRET_KEY': 'collez la clé secrète ici',
+  };
+  // Propriétés réservées au site de test : à retirer du projet de production
+  var A_SUPPRIMER = MODE_TEST ? [] : ['FRI_MODE', 'FRI_SHEET_ID', 'FRI_EMAIL_TEST', 'HA_URL_TEST', 'HA_ORG_SLUG'];
+  var props = PropertiesService.getScriptProperties();
+  Object.keys(A_DEFINIR).forEach(function(k) {
+    var v = String(A_DEFINIR[k] || '').trim();
+    if (!v || /collez/i.test(v)) { Logger.log('— ' + k + ' ignorée (valeur non renseignée)'); return; }
+    props.setProperty(k, v);
+    Logger.log('✅ ' + k + ' enregistrée (' + v.length + ' caractères)');
+  });
+  A_SUPPRIMER.forEach(function(k) {
+    if (props.getProperty(k) !== null) { props.deleteProperty(k); Logger.log('🗑 ' + k + ' supprimée'); }
+  });
+  Logger.log('Terminé. Pensez à effacer les valeurs saisies dans configurerProprietes, puis lancez afficherProprietes pour vérifier.');
+}
+
 // ── Montant total des remises famille 15 % accordées (console admin, ou à lancer depuis l'éditeur) ──
 // Même règle que le calcul des dossiers : un dossier qui compte au moins 3 activités éligibles
 // (colonne « Éligible remise » = 1, hors liste d'attente et lignes supprimées) a 15 % sur chacune d'elles.

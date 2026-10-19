@@ -6937,12 +6937,15 @@ async function afficherPiecesManquantes() {
 // ══════════════════════════════════════════════════════════════
 // CONSOLE TRÉSORIER
 // ══════════════════════════════════════════════════════════════
-const TRESORIER_PWD = '!FRI!2026!TRES!'; // Mot de passe trésorier
+// Mot de passe vérifié par le serveur (propriété TRESORIER_PWD) ; un admin connecté entre sans mot de passe.
+let _tresorierPwd = '';
 
-function showTresorierLogin() {
-  const pwd = prompt('Mot de passe Trésorier :');
-  if (!pwd) return;
-  if (pwd.trim() !== TRESORIER_PWD) { alert('Mot de passe incorrect.'); return; }
+function showTresorierLogin(demanderMdp) {
+  if (demanderMdp || !adminSession) {
+    const pwd = prompt('Mot de passe Trésorier :');
+    if (!pwd) return;
+    _tresorierPwd = pwd.trim();
+  }
   // Masquer les autres sections
   document.querySelector('.main').style.display = 'none';
   const adminCons = document.getElementById('admin-panel');
@@ -6969,9 +6972,19 @@ async function chargerStatsTresorier() {
 
   let statsData = null;
   try {
-    const gasResult = await callAppsScriptFetch(url, { action: 'getStatsTresorier', _token: FRI_SECRET_TOKEN });
+    const gasResult = await callAppsScriptFetch(url, { action: 'getStatsTresorier', _token: FRI_SECRET_TOKEN, _tresorierPwd: _tresorierPwd });
     const d = (gasResult && gasResult.data) ? gasResult.data : gasResult;
     if (d && d.status === 'ok' && d.stats) statsData = d.stats;
+    else if (d && d.code === 'ADMIN_AUTH') {
+      _tresorierPwd = '';
+      document.getElementById('tresorier-content').innerHTML =
+        '<div style="padding:40px;text-align:center;color:#c62828;">'
+        + '<p style="font-size:15px;font-weight:700;">🔒 Mot de passe trésorier incorrect</p>'
+        + '<p style="font-size:13px;color:#888;max-width:480px;margin:8px auto;">Le serveur a refusé l\'accès. Ressaisissez le mot de passe, ou connectez-vous à l\'administration.</p>'
+        + '<button onclick="closeTresorier();showTresorierLogin(true)" style="margin-top:12px;background:#1565c0;color:white;border:none;border-radius:8px;padding:10px 18px;font-size:13px;cursor:pointer;font-weight:600;">🔑 Ressaisir le mot de passe</button>'
+        + '</div>';
+      return;
+    }
     else console.warn('[FRI] getStatsTresorier : réponse inattendue', d);
   } catch (eStats) {
     console.warn('[FRI] getStatsTresorier KO:', eStats.message);

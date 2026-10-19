@@ -1549,6 +1549,10 @@ function traiterRequete(e) {
     // ── Actions réservées à l'équipe (admin / secrétariat) : session admin obligatoire ──
     if(ACTIONS_ADMIN.indexOf(payload.action)>=0){
       var sessionAdmin=verifierTokenAdmin(payload._adminToken||params._adminToken||'');
+      // Console trésorier : accessible aussi avec le mot de passe trésorier (vérifié ici, côté serveur)
+      if(!sessionAdmin && payload.action==='getStatsTresorier' && _verifierMdpTresorier(payload._tresorierPwd)){
+        sessionAdmin={user:'tresorier',role:'tresorier'};
+      }
       if(!sessionAdmin){
         Logger.log('⛔ Action admin refusée sans session valide : '+payload.action);
         return repondreAvecCb(REPONSE_ADMIN_REQUISE,null,null,callback);
@@ -2859,6 +2863,14 @@ var ACTIONS_ADMIN = [
   'getDemandesModification', 'traiterDemandeModification', 'getPiecesDossier',
   'getSuiviAdmin', 'majSuiviAdmin'
 ];
+// Mot de passe de la console trésorier : propriété du script TRESORIER_PWD
+// (à définir une fois via configurerProprietes). Sans cette propriété, seule une session admin ouvre la console.
+function _verifierMdpTresorier(pwd) {
+  pwd = String(pwd || '').trim();
+  var attendu = String(PropertiesService.getScriptProperties().getProperty('TRESORIER_PWD') || '').trim();
+  if (!attendu) { Logger.log('⚠️ TRESORIER_PWD absente des propriétés du script : console trésorier réservée aux sessions admin'); return false; }
+  return pwd !== '' && pwd === attendu;
+}
 var REPONSE_ADMIN_REQUISE = {
   status: 'error', code: 'ADMIN_AUTH',
   message: 'Session administrateur requise ou expirée — reconnectez-vous.'
@@ -3576,7 +3588,7 @@ function resteARegler(code) {
 function afficherProprietes() {
   var toutes = PropertiesService.getScriptProperties().getProperties();
   var cles = Object.keys(toutes).sort();
-  var secretes = /SECRET|TOKEN|PASS|CRED|KEY|CLIENT/i;
+  var secretes = /SECRET|TOKEN|PASS|PWD|CRED|KEY|CLIENT/i;
   var groupes = {
     'Configuration': [], 'Comptes admin': [], 'Jetons de paiement par email (pay_…)': [],
     'Verrous paiements HelloAsso (ha_checkout_…)': [], 'Caches et suivi interne': []
@@ -3612,8 +3624,8 @@ function afficherProprietes() {
       if (toutes[k]) Logger.log('⚠️ ' + k + ' est une propriété de test : à retirer (configurerProprietes)');
     });
   }
-  ['FRI_SECRET_TOKEN', 'HA_CLIENT_ID', 'HA_CLIENT_SECRET', 'MAILJET_API_KEY', 'MAILJET_SECRET_KEY'].forEach(function(k) {
-    if (!toutes[k]) Logger.log('⚠️ ' + k + ' absente' + (/MAILJET/.test(k) ? ' (envoi par Gmail uniquement)' : ''));
+  ['FRI_SECRET_TOKEN', 'HA_CLIENT_ID', 'HA_CLIENT_SECRET', 'MAILJET_API_KEY', 'MAILJET_SECRET_KEY', 'TRESORIER_PWD'].forEach(function(k) {
+    if (!toutes[k]) Logger.log('⚠️ ' + k + ' absente' + (/MAILJET/.test(k) ? ' (envoi par Gmail uniquement)' : k === 'TRESORIER_PWD' ? ' (console trésorier réservée aux sessions admin)' : ''));
   });
 }
 
@@ -3623,6 +3635,7 @@ function configurerProprietes() {
   var A_DEFINIR = {
     // 'MAILJET_API_KEY':    'collez la clé API ici',
     // 'MAILJET_SECRET_KEY': 'collez la clé secrète ici',
+    // 'TRESORIER_PWD':      'collez le mot de passe trésorier ici',
   };
   // Propriétés réservées au site de test : à retirer du projet de production
   var A_SUPPRIMER = MODE_TEST ? [] : ['FRI_MODE', 'FRI_SHEET_ID', 'FRI_EMAIL_TEST', 'HA_URL_TEST', 'HA_ORG_SLUG'];

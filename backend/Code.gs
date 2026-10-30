@@ -1261,7 +1261,7 @@ function doPost(e) {
         var nomFichier=String(payload.filename||'QS-Sante.pdf').replace(/[\\/:*?"<>|]/g,'_');
         var pdfBytes=Utilities.base64Decode(pdfB64,Utilities.Charset.UTF_8);
         var pdfBlob=Utilities.newBlob(pdfBytes,'application/pdf',nomFichier);
-        var nomDossierQS = String(payload.dossierOverride||'2-QS Santé Adhérents');
+        var nomDossierQS = _dossierPiece(payload.dossierOverride, '2-QS Santé Adhérents');
         var dossierQS=creerDossierSecurise(nomDossierQS);
         var fichierQS=dossierQS.createFile(pdfBlob);
         securiserFichier(fichierQS);
@@ -2304,7 +2304,7 @@ function traiterRequete(e) {
         var nomFichier=String(payload.filename||'QS-Sante.pdf').replace(/[\\/:*?"<>|]/g,'_');
         var pdfBytes=Utilities.base64Decode(pdfB64);
         var pdfBlob=Utilities.newBlob(pdfBytes,'application/pdf',nomFichier);
-        var nomDossierQS = String(payload.dossierOverride||'2-QS Santé Adhérents');
+        var nomDossierQS = _dossierPiece(payload.dossierOverride, '2-QS Santé Adhérents');
         var dossierQS=creerDossierSecurise(nomDossierQS);
         var fichierQS=dossierQS.createFile(pdfBlob);
         securiserFichier(fichierQS);
@@ -2978,6 +2978,27 @@ function securiserFichier(fichier) {
 function securiserDossier(dossier) {
   try{dossier.setSharing(DriveApp.Access.PRIVATE,DriveApp.Permission.NONE);var fichiers=dossier.getFiles(),nb=0;while(fichiers.hasNext()){securiserFichier(fichiers.next());nb++;}Logger.log('Dossier "'+dossier.getName()+'" sécurisé — '+nb+' fichier(s)');}catch(e){Logger.log('securiserDossier KO : '+e.toString());}
 }
+// Les pièces renvoyées (QS, RI) vont dans le dossier d'origine, plus dans « 21-QS Santé corrigés » / « 31-RI corrigé »
+function _dossierPiece(override, defaut) {
+  var o = String(override || '').trim();
+  return (!o || /corrig/i.test(o)) ? defaut : o;
+}
+
+// À lancer une fois depuis l'éditeur : déplace les pièces déjà rangées dans les dossiers « corrigés »
+// vers 2-QS Santé Adhérents et 3-Règlements intérieurs.
+function regrouperPiecesCorrigees() {
+  [['21-QS Santé corrigés', '2-QS Santé Adhérents'], ['31-RI corrigé', '3-Règlements intérieurs']].forEach(function(g) {
+    var src = dossiersDriveParNom(g[0]);
+    if (!src.hasNext()) { Logger.log('— ' + nomDossierDrive(g[0]) + ' : dossier absent'); return; }
+    var dest = creerDossierSecurise(g[1]), nb = 0;
+    while (src.hasNext()) {
+      var fichiers = src.next().getFiles();
+      while (fichiers.hasNext()) { fichiers.next().moveTo(dest); nb++; }
+    }
+    Logger.log('✅ ' + nb + ' fichier(s) déplacé(s) de ' + nomDossierDrive(g[0]) + ' vers ' + nomDossierDrive(g[1]));
+  });
+}
+
 function creerDossierSecurise(nom) {
   var dossiers=dossiersDriveParNom(nom);
   var dossier;
@@ -6030,7 +6051,7 @@ function supprimerDossierSheet(code) {
 // ══════════════════════════════════════════════════════════════
 function sauvegarderReglementDrive(code, nom, prenom, email, dateSignature, signatureBase64, dossierOverride) {
   var payload = { dossierOverride: dossierOverride || '' };
-  var nomDossierRI = String(payload && payload.dossierOverride ? payload.dossierOverride : '3-Règlements intérieurs');
+  var nomDossierRI = _dossierPiece(payload.dossierOverride, '3-Règlements intérieurs');
   var dossier = creerDossierSecurise(nomDossierRI);
   var dateStr = dateSignature || Utilities.formatDate(new Date(), 'Europe/Paris', 'dd/MM/yyyy à HH:mm');
   var nomFichier = 'RI_' + code + '_' + (nom || 'INCONNU').replace(/[^A-Z0-9]/gi, '_') + '_' + Utilities.formatDate(new Date(), 'Europe/Paris', 'yyyyMMdd') + '.pdf';

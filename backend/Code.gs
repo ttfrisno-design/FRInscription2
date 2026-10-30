@@ -2576,8 +2576,10 @@ function traiterRequete(e) {
         var found = null;
         for(var vi=0; vi<dataVD.length; vi++){
           if(String(dataVD[vi][19]||'').trim()===codeVD){
-            // Responsable : col AK (index 36) format "Prénom NOM"
-            var respRaw   = String(dataVD[vi][36]||'').trim();
+            // Responsable « Prénom NOM » : col AM (index 38) ; col AK (36) dans l'ancienne structure
+            // (dans la nouvelle, la col 36 est le sexe « M »/« F » : ne jamais l'afficher comme nom)
+            var respRaw   = String(dataVD[vi][isNewStructure(dataVD[vi]) ? 38 : 36]||'').trim();
+            if(respRaw.length <= 1) respRaw = '';
             var respParts = respRaw.split(' ');
             var respPrenom = respParts[0] || '';
             var respNom    = respParts.slice(1).join(' ') || '';

@@ -2979,15 +2979,17 @@ function securiserDossier(dossier) {
   try{dossier.setSharing(DriveApp.Access.PRIVATE,DriveApp.Permission.NONE);var fichiers=dossier.getFiles(),nb=0;while(fichiers.hasNext()){securiserFichier(fichiers.next());nb++;}Logger.log('Dossier "'+dossier.getName()+'" sécurisé — '+nb+' fichier(s)');}catch(e){Logger.log('securiserDossier KO : '+e.toString());}
 }
 // Les pièces renvoyées (QS, RI) vont dans le dossier d'origine, plus dans « 21-QS Santé corrigés » / « 31-RI corrigé »
+// (les « + » viennent d'un nom transmis par formulaire sans décodage des espaces)
 function _dossierPiece(override, defaut) {
-  var o = String(override || '').trim();
-  return (!o || /corrig/i.test(o)) ? defaut : o;
+  var o = String(override || '').replace(/\+/g, ' ').trim();
+  return (!o || /corrig/i.test(o) || o === defaut) ? defaut : o;
 }
 
 // À lancer une fois depuis l'éditeur : déplace les pièces déjà rangées dans les dossiers « corrigés »
-// vers 2-QS Santé Adhérents et 3-Règlements intérieurs.
+// (et dans « 2-QS+Santé+Adhérents » / « 3-Règlements+intérieurs ») vers 2-QS Santé Adhérents et 3-Règlements intérieurs.
 function regrouperPiecesCorrigees() {
-  [['21-QS Santé corrigés', '2-QS Santé Adhérents'], ['31-RI corrigé', '3-Règlements intérieurs']].forEach(function(g) {
+  [['21-QS Santé corrigés', '2-QS Santé Adhérents'], ['31-RI corrigé', '3-Règlements intérieurs'],
+   ['2-QS+Santé+Adhérents', '2-QS Santé Adhérents'], ['3-Règlements+intérieurs', '3-Règlements intérieurs']].forEach(function(g) {
     var src = dossiersDriveParNom(g[0]);
     if (!src.hasNext()) { Logger.log('— ' + nomDossierDrive(g[0]) + ' : dossier absent'); return; }
     var dest = creerDossierSecurise(g[1]), nb = 0;

@@ -12700,7 +12700,7 @@ async function docEnregistrer() {
           if (pdfB64Doc) {
             await envoyerPDFParEmail(fnDoc, pdfB64Doc, prenom+' '+nom,
               respPrenom ? respPrenom+' '+respNom : '', email, isMineur,
-              '2-QS Santé Adhérents');
+              ''); // dossier par défaut (2-QS Santé Adhérents), choisi par le serveur
             // Nettoyer fri_qs_pending
             try {
               var qsP2 = JSON.parse(localStorage.getItem('fri_qs_pending')||'[]');
@@ -12737,7 +12737,7 @@ async function docEnregistrer() {
           action: 'saveReglement', _token: FRI_SECRET_TOKEN,
           code: code, nom: riNomFin, prenom: riPrenomFin,
           email: riEmailFin, date: dateAuj, signature: riSigUrl,
-          dossierOverride: '3-Règlements intérieurs'
+          dossierOverride: '' // dossier par défaut (3-Règlements intérieurs), choisi par le serveur
         });
         var ifr = document.createElement('iframe');
         ifr.name = 'fri_ri_doc_'+Date.now(); ifr.style.display='none';

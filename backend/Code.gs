@@ -5017,7 +5017,7 @@ function validerPaiementSheet(rows, code, modeForce, montantHA, payerInfo) {
 //            estRegle, totalPayeAvant, emailAdherent, responsable }
 // ══════════════════════════════════════════════════════════════════════════════
 // Frais de dossier retenus (non remboursables) lors de la suppression d'une activité d'un dossier réglé
-var FRAIS_DOSSIER_SUPPRESSION = 10;
+var FRAIS_DOSSIER_SUPPRESSION = 30; // forfait frais de secrétariat (règlement intérieur)
 
 function appliquerModificationDossier(params) {
   var ss           = params.ss;
@@ -5170,7 +5170,7 @@ function appliquerModificationDossier(params) {
       ? '<div style="font-size:12px;color:#555;margin-top:8px;border-top:1px dashed #e0b080;padding-top:6px">'
         + 'Calcul : montant supprimé ' + (Math.round((totalPayeAvant - totalApres) * 100) / 100).toFixed(2) + ' €'
         + (adhesionNonRemboursee > 0 ? ' − adhésion FNSMR non remboursable ' + adhesionNonRemboursee.toFixed(2) + ' €' : '')
-        + (fraisDossier > 0 ? ' − frais de dossier ' + fraisDossier.toFixed(2) + ' € (non remboursables)' : '')
+        + (fraisDossier > 0 ? ' − frais de secrétariat ' + fraisDossier.toFixed(2) + ' € (non remboursables)' : '')
         + ' = <strong>' + avoir.toFixed(2) + ' €</strong></div>'
       : '';
     var regleHtml = '';
@@ -5242,7 +5242,7 @@ function appliquerModificationDossier(params) {
 
     var regleTexte = estRegle
       ? (avoir > 0 ? '\n\nAvoir enregistré : ' + avoir.toFixed(2) + ' €'
-          + (fraisDossier > 0 ? ' (frais de dossier de ' + fraisDossier.toFixed(2) + ' € retenus'
+          + (fraisDossier > 0 ? ' (frais de secrétariat de ' + fraisDossier.toFixed(2) + ' € retenus'
              + (adhesionNonRemboursee > 0 ? ', adhésion FNSMR non remboursable' : '') + ')' : '')
         : supplement > 0 ? '\n\nSupplément à régler : ' + supplement.toFixed(2) + ' €'
         : '\n\nAucune différence de règlement.')
@@ -5760,8 +5760,8 @@ function supprimerActiviteGAS(code, actNom, actId, membreNom, placesIdParam, com
     });
     if (e.regle) {
       sheet.getRange(ligne, 34).setValue(res.avoir > 0
-        ? 'Avoir suppression : ' + res.avoir.toFixed(2) + ' € (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)'
-        : 'Suppression — aucun avoir (frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)');
+        ? 'Avoir suppression : ' + res.avoir.toFixed(2) + ' € (frais de secrétariat ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)'
+        : 'Suppression — aucun avoir (frais de secrétariat ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus)');
     }
     Logger.log('✅ supprimerActiviteGAS ' + code + ' / ' + actNomClean + ' / ' + prenom + ' ' + nom
       + ' — réglé:' + e.regle + ' attente:' + e.enAttente + ' avoir:' + res.avoir);

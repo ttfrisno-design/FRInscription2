@@ -1370,7 +1370,7 @@ if (FRI_ENV === 'test') {
 // Non proratisés : adhésion FNSMR 15 €, licence FFTT.
 // ============================================================
 // Frais de dossier retenus (non remboursables) lors de la suppression d'une activité d'un dossier réglé
-const FRAIS_DOSSIER_SUPPRESSION = 10;
+const FRAIS_DOSSIER_SUPPRESSION = 30; // forfait frais de secrétariat (règlement intérieur)
 
 const PRORATA_DEBUT = '2027-01-01';
 const SAISON_PREMIERE_SEMAINE = '2026-09-14';   // lundi de la 1re semaine d'activité
@@ -10870,7 +10870,7 @@ async function confirmerSupprActivite(code, ligneIdx) {
     : estRegle
       ? 'Dossier <strong>réglé</strong> → ligne gardée en orange dans Inscriptions, avoir crédité.<br>'
         + 'Réglé : ' + euro(sim.totalAvant) + ' · nouveau total : ' + euro(sim.totalApres)
-        + ' · frais de dossier ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus · adhésion non remboursée.'
+        + ' · frais de secrétariat ' + FRAIS_DOSSIER_SUPPRESSION + ' € retenus · adhésion non remboursée.'
       : 'Dossier <strong>non réglé</strong> → ligne effacée.<br>Nouveau total à régler : <strong>' + euro(sim.totalApres) + '</strong> (au lieu de ' + euro(sim.totalAvant) + ').';
 
   document.getElementById('modal-confirm-suppr')?.remove();
